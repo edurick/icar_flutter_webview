@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>iCar</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>iCar</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.14</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>icar.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.mycompany.icarusers</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string></string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>O iCar precisa acessar a câmera para permitir que você tire fotos de veículos para anúncios, capture imagens de documentos para verificação e grave vídeos demonstrativos. Por exemplo, ao criar um anúncio de venda, você poderá fotografar seu veículo diretamente pelo app.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>O iCar usa sua localização para mostrar veículos e serviços automotivos próximos a você, calcular rotas até concessionárias e oficinas, e enviar alertas sobre ofertas em sua região. Por exemplo, você receberá notificações de promoções em lojas próximas quando estiver na área.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>O iCar usa sua localização em segundo plano para enviar alertas sobre serviços automotivos e ofertas especiais quando você passa próximo a parceiros cadastrados. Por exemplo, ao passar por uma oficina parceira, você será notificado sobre promoções de manutenção disponíveis.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>O iCar precisa acessar sua localização para mostrar veículos disponíveis perto de você, calcular distâncias até concessionárias e encontrar serviços automotivos na sua região. Por exemplo, ao buscar por oficinas, mostraremos as mais próximas com base em sua localização atual.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>O iCar precisa acessar o microfone para gravar áudio quando você criar vídeos de demonstração de veículos. Por exemplo, ao gravar um vídeo mostrando o funcionamento do motor ou interior do veículo, você poderá adicionar narração explicativa.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>O iCar precisa permissão para salvar imagens em sua biblioteca de fotos quando você baixar fotos de veículos, documentos ou comprovantes. Por exemplo, ao salvar a foto de um veículo de interesse para consulta posterior.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>O iCar precisa acessar sua biblioteca de fotos para permitir que você selecione imagens de veículos para anúncios, envie fotos de documentos e compartilhe imagens com vendedores. Por exemplo, ao criar um anúncio, você poderá escolher fotos existentes do seu veículo.</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIMainStoryboardFile</key>
+	<string>Main</string>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

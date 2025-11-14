@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Localização - Flutter WebView</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196F3;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background: #e8f5e9;
+            border-left: 4px solid #4CAF50;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .error {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .location-data {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+        }
+        .log {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 20px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #37474f;
+        }
+        .timestamp {
+            color: #fdd835;
+            font-size: 12px;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        .status.waiting {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌍 Teste de Comunicação de Localização</h1>
+        
+        <div class="info">
+            <strong>ℹ️ Como funciona:</strong><br>
+            Este teste demonstra a comunicação entre o frontend JavaScript e o Flutter nativo via localStorage.
+            O Flutter monitora o localStorage a cada 500ms procurando por requisições de localização.
+        </div>
+
+        <div>
+            <button onclick="requestLocation()" id="requestBtn">📍 Solicitar Localização GPS</button>
+            <button onclick="clearLogs()">🗑️ Limpar Logs</button>
+            <button onclick="checkLocalStorage()">🔍 Verificar localStorage</button>
+        </div>
+
+        <div id="status"></div>
+        <div id="result"></div>
+        
+        <h3>📋 Log de Eventos:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let requestCount = 0;
+        let currentRequestId = null;
+        let checkInterval = null;
+
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString('pt-BR', { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                second: '2-digit',
+                fractionalSecondDigits: 3
+            });
+            
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            logEntry.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+            log.appendChild(logEntry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function requestLocation() {
+            requestCount++;
+            currentRequestId = Date.now();
+            
+            const requestBtn = document.getElementById('requestBtn');
+            requestBtn.disabled = true;
+            
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `
+                <div class="info">
+                    ⏳ Aguardando resposta do Flutter...
+                    <span class="status waiting">WAITING</span>
+                </div>
+            `;
+            
+            const request = {
+                type: 'REQUEST_LOCATION',
+                timestamp: currentRequestId,
+                requestNumber: requestCount
+            };
+            
+            addLog(`📤 Enviando requisição #${requestCount} para Flutter`, 'request');
+            addLog(`Dados: ${JSON.stringify(request)}`, 'data');
+            
+            localStorage.setItem('flutter_location_request', JSON.stringify(request));
+            
+            checkForResponse();
+        }
+
+        function checkForResponse() {
+            let attempts = 0;
+            const maxAttempts = 30; // 15 segundos (30 * 500ms)
+            
+            if (checkInterval) {
+                clearInterval(checkInterval);
+            }
+            
+            checkInterval = setInterval(() => {
+                attempts++;
+                
+                const response = localStorage.getItem('flutter_location_response');
+                
+                if (response) {
+                    try {
+                        const data = JSON.parse(response);
+                        
+                        // Verificar se a resposta é recente (menos de 15 segundos)
+                        if (data.timestamp && (Date.now() - data.timestamp) < 15000) {
+                            addLog(`📥 Resposta recebida do Flutter!`, 'response');
+                            handleLocationResponse(data);
+                            localStorage.removeItem('flutter_location_response');
+                            clearInterval(checkInterval);
+                            document.getElementById('requestBtn').disabled = false;
+                            return;
+                        }
+                    } catch (e) {
+                        addLog(`❌ Erro ao processar resposta: ${e.message}`, 'error');
+                    }
+                }
+                
+                if (attempts >= maxAttempts) {
+                    clearInterval(checkInterval);
+                    document.getElementById('requestBtn').disabled = false;
+                    
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.innerHTML = `
+                        <div class="error">
+                            ⏱️ Timeout: Nenhuma resposta recebida após 15 segundos
+                            <span class="status error">TIMEOUT</span>
+                        </div>
+                    `;
+                    
+                    addLog(`⏱️ Timeout após ${maxAttempts * 500}ms`, 'timeout');
+                }
+            }, 500);
+        }
+
+        function handleLocationResponse(data) {
+            const statusDiv = document.getElementById('status');
+            const resultDiv = document.getElementById('result');
+            
+            if (data.type === 'LOCATION_RESPONSE') {
+                statusDiv.innerHTML = `
+                    <div class="success">
+                        ✅ Localização recebida com sucesso!
+                        <span class="status success">SUCCESS</span>
+                    </div>
+                `;
+                
+                resultDiv.innerHTML = `
+                    <div class="location-data">
+                        <h3>📍 Dados da Localização:</h3>
+                        <strong>Latitude:</strong> ${data.latitude}<br>
+                        <strong>Longitude:</strong> ${data.longitude}<br>
+                        <strong>Precisão:</strong> ${data.accuracy ? data.accuracy.toFixed(2) + ' metros' : 'N/A'}<br>
+                        <strong>Altitude:</strong> ${data.altitude || 'N/A'}<br>
+                        <strong>Velocidade:</strong> ${data.speed || 'N/A'}<br>
+                        <strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString('pt-BR')}<br>
+                        <br>
+                        <a href="https://www.google.com/maps?q=${data.latitude},${data.longitude}" 
+                           target="_blank" style="color: #2196F3;">
+                            🗺️ Ver no Google Maps
+                        </a>
+                    </div>
+                `;
+                
+                addLog(`✅ Localização: ${data.latitude}, ${data.longitude} (precisão: ${data.accuracy}m)`, 'success');
+                
+            } else if (data.type === 'LOCATION_ERROR') {
+                statusDiv.innerHTML = `
+                    <div class="error">
+                        ❌ Erro ao obter localização
+                        <span class="status error">ERROR</span>
+                    </div>
+                `;
+                
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <strong>Erro:</strong> ${data.error}<br>
+                        <strong>Timestamp:</strong> ${new Date(data.timestamp).toLocaleString('pt-BR')}
+                    </div>
+                `;
+                
+                addLog(`❌ Erro: ${data.error}`, 'error');
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('log').innerHTML = '';
+            document.getElementById('status').innerHTML = '';
+            document.getElementById('result').innerHTML = '';
+            addLog('🗑️ Logs limpos', 'info');
+        }
+
+        function checkLocalStorage() {
+            addLog('🔍 Verificando localStorage...', 'info');
+            
+            const request = localStorage.getItem('flutter_location_request');
+            const response = localStorage.getItem('flutter_location_response');
+            
+            if (request) {
+                addLog(`📋 Requisição pendente: ${request}`, 'data');
+            } else {
+                addLog('✅ Nenhuma requisição pendente', 'info');
+            }
+            
+            if (response) {
+                addLog(`📋 Resposta disponível: ${response}`, 'data');
+            } else {
+                addLog('ℹ️ Nenhuma resposta disponível', 'info');
+            }
+        }
+
+        // Limpar localStorage ao carregar a página
+        window.addEventListener('load', () => {
+            localStorage.removeItem('flutter_location_request');
+            localStorage.removeItem('flutter_location_response');
+            addLog('🚀 Sistema de teste de localização iniciado', 'info');
+            addLog('ℹ️ localStorage limpo ao iniciar', 'info');
+        });
+
+        // Adicionar listener para mensagens do Flutter
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.source === 'flutter') {
+                addLog(`📨 Mensagem do Flutter: ${event.data.type}`, 'flutter');
+                
+                if (event.data.type === 'flutterReady') {
+                    addLog('✅ Flutter WebView está pronto e monitorando localStorage', 'success');
+                }
+            }
+        });
+    </script>
+</body>
+</html>
