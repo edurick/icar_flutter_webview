@@ -67,3 +67,8 @@ if __name__ == '__main__':
         print("\n❌ Erro ao gerar ícones")
         sys.exit(1)
 
+
+
+
+
+

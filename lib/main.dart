@@ -17,6 +17,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'firebase_options.dart';
 
 // Classe para gerenciar logs de debug
@@ -1652,7 +1654,22 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
                 if (key) {
-                  allItems[key] = localStorage.getItem(key);
+                  try {
+                    const value = localStorage.getItem(key);
+                    // Tentar parsear como JSON se possível, senão usar como string
+                    if (value && (value.trim().startsWith('{') || value.trim().startsWith('['))) {
+                      try {
+                        allItems[key] = JSON.parse(value);
+                      } catch(e) {
+                        allItems[key] = value;
+                      }
+                    } else {
+                      allItems[key] = value;
+                    }
+                  } catch(e) {
+                    // Se houver erro ao ler um item específico, pular
+                    console.warn('Erro ao ler localStorage key:', key, e);
+                  }
                 }
               }
               return JSON.stringify(allItems);
@@ -1665,11 +1682,29 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         final result = await controller.runJavaScriptReturningResult(jsCode);
         String resultStr = result.toString().trim();
         
-        // Remover aspas extras se houver
-        if (resultStr.startsWith('"') && resultStr.endsWith('"')) {
-          resultStr = resultStr.substring(1, resultStr.length - 1);
+        // Tratar resultado nulo ou vazio
+        if (resultStr.isEmpty || resultStr == 'null' || resultStr == 'undefined') {
+          return;
         }
+        
+        // Remover aspas extras se houver (mas apenas se for uma string JSON válida)
+        if (resultStr.startsWith('"') && resultStr.endsWith('"')) {
+          // Verificar se é uma string JSON válida (começa e termina com aspas)
+          try {
+            // Tentar decodificar como string JSON primeiro
+            resultStr = jsonDecode(resultStr) as String;
+          } catch (e) {
+            // Se falhar, apenas remover as aspas externas
+            resultStr = resultStr.substring(1, resultStr.length - 1);
+          }
+        }
+        
+        // Tentar fazer unescape de caracteres especiais
         resultStr = resultStr.replaceAll('\\"', '"');
+        resultStr = resultStr.replaceAll('\\n', '\n');
+        resultStr = resultStr.replaceAll('\\r', '\r');
+        resultStr = resultStr.replaceAll('\\t', '\t');
+        resultStr = resultStr.replaceAll('\\\\', '\\');
         
         try {
           final Map<String, dynamic> localStorageData = jsonDecode(resultStr);
@@ -1702,8 +1737,36 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             print('📦 === Fim do localStorage ===');
           }
         } catch (e) {
-          print('⚠️ Erro ao parsear localStorage: $e');
-          print('📦 localStorage raw: $resultStr');
+          // Log mais detalhado do erro
+          final errorMsg = e.toString();
+          final errorPos = errorMsg.contains('at character') 
+              ? errorMsg.substring(errorMsg.indexOf('at character') + 13).split(')').first
+              : 'unknown';
+          
+          // Mostrar contexto ao redor do erro
+          if (resultStr.length > 300) {
+            final pos = int.tryParse(errorPos) ?? 0;
+            final start = (pos - 50).clamp(0, resultStr.length);
+            final end = (pos + 50).clamp(0, resultStr.length);
+            print('⚠️ Erro ao parsear localStorage: $e');
+            print('📦 Posição do erro: caractere $errorPos');
+            print('📦 Contexto (chars ${start}-${end}): ${resultStr.substring(start, end)}');
+          } else {
+            print('⚠️ Erro ao parsear localStorage: $e');
+            print('📦 localStorage raw (${resultStr.length} chars): ${resultStr.length > 500 ? resultStr.substring(0, 500) + "..." : resultStr}');
+          }
+          
+          // Tentar parsear parcialmente se possível
+          try {
+            // Tentar encontrar onde está o problema e pular valores problemáticos
+            final sanitized = resultStr.replaceAll(RegExp(r'[^\x20-\x7E]'), '');
+            if (sanitized != resultStr) {
+              final Map<String, dynamic> partialData = jsonDecode(sanitized);
+              print('📦 Parse parcial bem-sucedido após sanitização');
+            }
+          } catch (e2) {
+            // Ignorar erro do parse parcial
+          }
         }
       } catch (e) {
         print('❌ Erro ao monitorar localStorage: $e');
@@ -2182,7 +2245,78 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     final notification = message.notification;
     if (notification == null) return;
 
-    const androidDetails = AndroidNotificationDetails(
+    // Log de todos os dados recebidos
+    print('📱 Dados da notificação: ${message.data}');
+    print('📱 Chaves dos dados: ${message.data.keys.toList()}');
+
+    // Buscar URL do ícone do remetente nos dados
+    // PRIORIDADE: sender_icon_url > image (se image for do sender)
+    String? senderIconUrl;
+    if (message.data.containsKey('sender_icon_url')) {
+      senderIconUrl = message.data['sender_icon_url'];
+      print('📱 URL do ícone do remetente encontrada (sender_icon_url): $senderIconUrl');
+    } else if (message.data.containsKey('image')) {
+      // Se não temos sender_icon_url, verificar se 'image' é do sender
+      // (se image == sender_icon_url ou se não temos sender_icon_url mas temos image)
+      final imageUrl = message.data['image'];
+      // Verificar se image não é o logo padrão do iCar
+      if (imageUrl != null && 
+          imageUrl.toString().isNotEmpty && 
+          !imageUrl.toString().contains('icar.skalacode.com/images/logo.png')) {
+        senderIconUrl = imageUrl.toString();
+        print('📱 Usando image como senderIconUrl (não é logo padrão): $senderIconUrl');
+      } else {
+        print('⚠️ image é logo padrão do iCar, ignorando');
+      }
+    } else {
+      print('⚠️ sender_icon_url e image não encontrados nos dados');
+    }
+
+    // Baixar imagem do ícone se disponível
+    String? largeIconPath;
+    if (senderIconUrl != null && senderIconUrl.isNotEmpty && senderIconUrl != 'null') {
+      try {
+        print('📥 Baixando ícone de: $senderIconUrl');
+        // Baixar imagem da URL
+        final response = await http.get(Uri.parse(senderIconUrl));
+        print('📥 Status da resposta: ${response.statusCode}');
+        print('📥 Tamanho da resposta: ${response.bodyBytes.length} bytes');
+        
+        if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+          // Salvar temporariamente
+          final tempDir = await getTemporaryDirectory();
+          final file = File('${tempDir.path}/notification_icon_${message.hashCode}.png');
+          await file.writeAsBytes(response.bodyBytes);
+          largeIconPath = file.path;
+          
+          // Verificar se o arquivo foi criado
+          final fileExists = await file.exists();
+          final fileSize = await file.length();
+          print('✅ Ícone do remetente baixado: $largeIconPath');
+          print('✅ Arquivo existe: $fileExists, Tamanho: $fileSize bytes');
+        } else {
+          print('❌ Falha ao baixar: status ${response.statusCode}, tamanho ${response.bodyBytes.length}');
+        }
+      } catch (e, stackTrace) {
+        print('❌ Erro ao baixar ícone do remetente: $e');
+        print('❌ Stack trace: $stackTrace');
+      }
+    } else {
+      print('⚠️ senderIconUrl é null, vazio ou "null"');
+    }
+
+    // Log antes de criar AndroidNotificationDetails
+    print('📱 Criando AndroidNotificationDetails com largeIcon: ${largeIconPath ?? "null"}');
+    
+    // O smallIcon (icon) no Android deve ser um recurso drawable, não um arquivo
+    // O @mipmap/ic_launcher já deve ser o ícone do iCar
+    // Se app_icon_url estiver presente nos dados, logamos para referência
+    String? appIconUrl = message.data['app_icon_url'];
+    if (appIconUrl != null && appIconUrl.isNotEmpty && appIconUrl != 'null') {
+      print('📱 Ícone do iCar disponível em app_icon_url: $appIconUrl (usando @mipmap/ic_launcher como smallIcon)');
+    }
+    
+    final androidDetails = AndroidNotificationDetails(
       'high_importance_channel',
       'Notificações Importantes',
       channelDescription: 'Este canal é usado para notificações importantes',
@@ -2191,15 +2325,20 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       showWhen: true,
       playSound: true,
       enableVibration: true,
+      largeIcon: largeIconPath != null ? FilePathAndroidBitmap(largeIconPath) : null,
+      // Usar ícone do iCar como smallIcon (ic_launcher deve ser o ícone do iCar)
+      icon: '@mipmap/ic_launcher', // Ícone do iCar
     );
+    
+    print('📱 AndroidNotificationDetails criado com largeIcon: ${androidDetails.largeIcon != null}');
 
-    const iosDetails = DarwinNotificationDetails(
+    final iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
     );
 
-    const details = NotificationDetails(
+    final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
@@ -2350,32 +2489,59 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         ''';
 
         debugLogger.addLog('🔍 [Ciclo ${timer.tick}] Executando JavaScript para ler localStorage...', level: LogLevel.debug);
-        print('🔍 [DEBUG] [Ciclo ${timer.tick}] Executando JavaScript para ler localStorage...');
         
         final result = await controller.runJavaScriptReturningResult(jsCode);
         String resultStr = result.toString().trim();
         
         debugLogger.addLog('📦 [Ciclo ${timer.tick}] Resultado raw do JavaScript: ${resultStr.length > 200 ? resultStr.substring(0, 200) + "..." : resultStr}', level: LogLevel.debug);
-        print('🔍 [DEBUG] [Ciclo ${timer.tick}] Resultado raw do JavaScript: $resultStr');
         
-        // Remover aspas extras se houver
-        if (resultStr.startsWith('"') && resultStr.endsWith('"')) {
-          resultStr = resultStr.substring(1, resultStr.length - 1);
+        // Tratar resultado nulo ou vazio
+        if (resultStr.isEmpty || resultStr == 'null' || resultStr == 'undefined') {
+          return;
         }
-        // Remover escape de aspas
+        
+        // Remover aspas extras se houver (mas apenas se for uma string JSON válida)
+        if (resultStr.startsWith('"') && resultStr.endsWith('"')) {
+          try {
+            // Tentar decodificar como string JSON primeiro
+            resultStr = jsonDecode(resultStr) as String;
+          } catch (e) {
+            // Se falhar, apenas remover as aspas externas
+            resultStr = resultStr.substring(1, resultStr.length - 1);
+          }
+        }
+        
+        // Tentar fazer unescape de caracteres especiais
         resultStr = resultStr.replaceAll('\\"', '"');
+        resultStr = resultStr.replaceAll('\\n', '\n');
+        resultStr = resultStr.replaceAll('\\r', '\r');
+        resultStr = resultStr.replaceAll('\\t', '\t');
+        resultStr = resultStr.replaceAll('\\\\', '\\');
         
         // Parse do resultado JSON
         Map<String, dynamic>? data;
         try {
           data = jsonDecode(resultStr);
           debugLogger.addLog('✅ [Ciclo ${timer.tick}] JSON parseado com sucesso', level: LogLevel.debug);
-          print('🔍 [DEBUG] [Ciclo ${timer.tick}] JSON parseado com sucesso');
         } catch (e) {
+          // Log mais detalhado do erro
+          final errorMsg = e.toString();
+          final errorPos = errorMsg.contains('at character') 
+              ? errorMsg.substring(errorMsg.indexOf('at character') + 13).split(')').first
+              : 'unknown';
+          
           debugLogger.addLog('❌ [Ciclo ${timer.tick}] Erro ao parsear resultado do monitoramento: $e', level: LogLevel.error);
-          debugLogger.addLog('📦 [Ciclo ${timer.tick}] Resultado raw (primeiros 500 chars): ${resultStr.length > 500 ? resultStr.substring(0, 500) + "..." : resultStr}', level: LogLevel.error);
-          print('⚠️ [DEBUG] [Ciclo ${timer.tick}] Erro ao parsear resultado do monitoramento: $e');
-          print('📦 [DEBUG] [Ciclo ${timer.tick}] Resultado raw: $resultStr');
+          
+          // Mostrar contexto ao redor do erro
+          if (resultStr.length > 300) {
+            final pos = int.tryParse(errorPos) ?? 0;
+            final start = (pos - 50).clamp(0, resultStr.length);
+            final end = (pos + 50).clamp(0, resultStr.length);
+            debugLogger.addLog('📦 [Ciclo ${timer.tick}] Posição do erro: caractere $errorPos', level: LogLevel.error);
+            debugLogger.addLog('📦 [Ciclo ${timer.tick}] Contexto (chars ${start}-${end}): ${resultStr.substring(start, end)}', level: LogLevel.error);
+          } else {
+            debugLogger.addLog('📦 [Ciclo ${timer.tick}] Resultado raw (${resultStr.length} chars): ${resultStr.length > 500 ? resultStr.substring(0, 500) + "..." : resultStr}', level: LogLevel.error);
+          }
           return;
         }
         
@@ -2563,63 +2729,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           }
         }
         
-        // Log detalhado SEMPRE para cada ciclo (já que é a cada 5 segundos)
-        final logMessage = '🔍 [Ciclo ${timer.tick}] Email=${emailToUse ?? "NENHUM"}, FCM=${hasFcmToken ? "SIM" : "NÃO"}, Keys=${localStorageSize ?? 0}';
-        debugLogger.addLog(logMessage, level: LogLevel.info);
-        print('🔍 [DEBUG] ========================================');
-        print('🔍 [DEBUG] Monitoramento de email - Ciclo ${timer.tick}');
-        print('🔍 [DEBUG] Timestamp: ${timestamp ?? DateTime.now().toIso8601String()}');
-        print('   📧 Email encontrado: ${emailToUse ?? "NENHUM"}');
-        print('   🔑 FCM Token presente: $hasFcmToken');
-        print('   ⏰ Última atualização: ${lastUpdateStr ?? "NUNCA"}');
-        print('   📦 Total de chaves no localStorage: ${localStorageSize ?? 0}');
-        print('   📦 Total de chaves no sessionStorage: ${sessionStorageSize ?? 0}');
-        
-        if (emailSources != null) {
-          print('   📋 Fontes de email verificadas:');
-          if (emailSources['localStorage'] != null) {
-            print('     localStorage:');
-            (emailSources['localStorage'] as Map<String, dynamic>).forEach((key, value) {
-              final valueStr = value != null ? (value.toString().length > 50 ? value.toString().substring(0, 50) + "..." : value.toString()) : "null";
-              debugLogger.addLog('       - $key: $valueStr', level: LogLevel.debug);
-              print('       - $key: $valueStr');
-            });
-          }
-          if (emailSources['sessionStorage'] != null) {
-            print('     sessionStorage:');
-            (emailSources['sessionStorage'] as Map<String, dynamic>).forEach((key, value) {
-              final valueStr = value != null ? (value.toString().length > 50 ? value.toString().substring(0, 50) + "..." : value.toString()) : "null";
-              debugLogger.addLog('       - $key: $valueStr', level: LogLevel.debug);
-              print('       - $key: $valueStr');
-            });
-          }
+        // Log apenas quando houver mudança significativa (email encontrado ou token registrado)
+        if (emailToUse != null && emailToUse.isNotEmpty && emailToUse.contains('@')) {
+          final logMessage = '📧 Email detectado: ${emailToUse.substring(0, emailToUse.indexOf('@'))}@***, FCM=${hasFcmToken ? "SIM" : "NÃO"}';
+          debugLogger.addLog(logMessage, level: LogLevel.info);
         }
-        
-        if (allEmailValues != null && allEmailValues.isNotEmpty) {
-          print('   📧 Todas as chaves relacionadas a email/user:');
-          allEmailValues.forEach((key, value) {
-            final valueStr = value != null ? value.toString() : "null";
-            debugLogger.addLog('     - $key: $valueStr', level: LogLevel.debug);
-            print('     - $key: $valueStr');
-          });
-        }
-        
-        if (localKeys != null && localKeys.isNotEmpty) {
-          print('   📦 Chaves no localStorage (${localKeys.length}):');
-          localKeys.forEach((key) {
-            debugLogger.addLog('     - $key', level: LogLevel.debug);
-            print('     - $key');
-          });
-        }
-        
-        if (sessionKeys != null && sessionKeys.isNotEmpty) {
-          print('   📦 Chaves no sessionStorage (${sessionKeys.length}):');
-          sessionKeys.forEach((key) {
-            debugLogger.addLog('     - $key', level: LogLevel.debug);
-            print('     - $key');
-          });
-        }
-        print('🔍 [DEBUG] ========================================');
         
         // Verificar se é um email válido (usar emailToUse que pode ter sido obtido via API)
         if (emailToUse == null || emailToUse.isEmpty || emailToUse == 'null' || !emailToUse.contains('@')) {
@@ -3080,31 +3194,19 @@ class PushNotificationService {
     
     try {
       debugLogger.addLog('📱 [PushNotificationService] Iniciando registro de token para: $email', level: LogLevel.info);
-      print('📱 [DEBUG] [PushNotificationService] Iniciando registro de token para: $email');
-      print('📱 [DEBUG] [PushNotificationService] Timestamp: ${DateTime.now().toIso8601String()}');
 
       // 1. Autenticar no Firebase
       UserCredential? userCredential;
       try {
-        debugLogger.addLog('📱 [PushNotificationService] Tentando fazer login no Firebase...', level: LogLevel.info);
-        print('📱 [DEBUG] [PushNotificationService] Tentando fazer login no Firebase...');
-        print('📱 [DEBUG] [PushNotificationService] Email: $email');
-        
         // Tentar fazer login primeiro
-        final loginStartTime = DateTime.now();
         userCredential = await _auth.signInWithEmailAndPassword(
           email: email,
           password: _defaultPassword,
         );
-        final loginDuration = DateTime.now().difference(loginStartTime);
         
-        debugLogger.addLog('✅ [PushNotificationService] Login Firebase bem-sucedido em ${loginDuration.inMilliseconds}ms', level: LogLevel.info);
-        print('✅ [DEBUG] [PushNotificationService] Login Firebase bem-sucedido');
-        print('✅ [DEBUG] [PushNotificationService] Duração do login: ${loginDuration.inMilliseconds}ms');
-        print('✅ [DEBUG] [PushNotificationService] User ID: ${userCredential.user?.uid}');
+        debugLogger.addLog('✅ [PushNotificationService] Login Firebase bem-sucedido', level: LogLevel.info);
       } catch (e) {
         debugLogger.addLog('⚠️ [PushNotificationService] Erro ao fazer login: $e', level: LogLevel.warning);
-        print('⚠️ [DEBUG] [PushNotificationService] Erro ao fazer login: $e');
         
         // Se o usuário não existe ou credenciais inválidas, tentar criar conta
         // invalid-credential pode significar que o usuário não existe
@@ -3112,44 +3214,31 @@ class PushNotificationService {
             e.toString().contains('wrong-password') ||
             e.toString().contains('invalid-credential')) {
           debugLogger.addLog('📝 [PushNotificationService] Usuário não encontrado, criando conta...', level: LogLevel.info);
-          print('📝 [DEBUG] [PushNotificationService] Usuário não encontrado, criando conta...');
           try {
-            final createStartTime = DateTime.now();
             userCredential = await _auth.createUserWithEmailAndPassword(
               email: email,
               password: _defaultPassword,
             );
-            final createDuration = DateTime.now().difference(createStartTime);
             
-            debugLogger.addLog('✅ [PushNotificationService] Conta Firebase criada com sucesso em ${createDuration.inMilliseconds}ms', level: LogLevel.info);
-            print('✅ [DEBUG] [PushNotificationService] Conta Firebase criada com sucesso');
-            print('✅ [DEBUG] [PushNotificationService] Duração da criação: ${createDuration.inMilliseconds}ms');
-            print('✅ [DEBUG] [PushNotificationService] User ID: ${userCredential.user?.uid}');
+            debugLogger.addLog('✅ [PushNotificationService] Conta Firebase criada com sucesso', level: LogLevel.info);
           } catch (createError) {
             debugLogger.addLog('❌ [PushNotificationService] Erro ao criar conta Firebase: $createError', level: LogLevel.error);
-            print('❌ [DEBUG] [PushNotificationService] Erro ao criar conta Firebase: $createError');
             // Se falhar ao criar (pode ser que já exista), tentar login novamente
             try {
-              debugLogger.addLog('🔄 [PushNotificationService] Tentando login novamente após erro de criação...', level: LogLevel.info);
-              print('🔄 [DEBUG] [PushNotificationService] Tentando login novamente após erro de criação...');
-              
               userCredential = await _auth.signInWithEmailAndPassword(
                 email: email,
                 password: _defaultPassword,
               );
               
               debugLogger.addLog('✅ [PushNotificationService] Login Firebase bem-sucedido após tentativa de criação', level: LogLevel.info);
-              print('✅ [DEBUG] [PushNotificationService] Login Firebase bem-sucedido após tentativa de criação');
             } catch (retryError) {
               debugLogger.addLog('❌ [PushNotificationService] Erro ao fazer login após tentativa de criação: $retryError', level: LogLevel.error);
-              print('❌ [DEBUG] [PushNotificationService] Erro ao fazer login após tentativa de criação: $retryError');
               // Lançar exceção para que o erro seja capturado no _registerPushToken
               rethrow;
             }
           }
         } else {
           debugLogger.addLog('❌ [PushNotificationService] Erro ao autenticar no Firebase: $e', level: LogLevel.error);
-          print('❌ [DEBUG] [PushNotificationService] Erro ao autenticar no Firebase: $e');
           
           // Se for erro de too-many-requests ou invalid-credential, lançar exceção para ser capturada
           final errorStr = e.toString();
@@ -3165,34 +3254,23 @@ class PushNotificationService {
       String? fcmToken;
       try {
         debugLogger.addLog('📱 [PushNotificationService] Obtendo token FCM...', level: LogLevel.info);
-        print('📱 [DEBUG] [PushNotificationService] Obtendo token FCM...');
         
-        final tokenStartTime = DateTime.now();
         fcmToken = await _messaging.getToken();
-        final tokenDuration = DateTime.now().difference(tokenStartTime);
         
         if (fcmToken == null) {
           debugLogger.addLog('❌ [PushNotificationService] Token FCM é null', level: LogLevel.error);
-          print('❌ [DEBUG] [PushNotificationService] Token FCM é null');
           return null;
         }
         
-        debugLogger.addLog('✅ [PushNotificationService] Token FCM obtido em ${tokenDuration.inMilliseconds}ms. Tamanho: ${fcmToken.length} caracteres', level: LogLevel.info);
-        print('✅ [DEBUG] [PushNotificationService] Token FCM obtido');
-        print('✅ [DEBUG] [PushNotificationService] Duração: ${tokenDuration.inMilliseconds}ms');
-        print('✅ [DEBUG] [PushNotificationService] Token (primeiros 30 chars): ${fcmToken.substring(0, fcmToken.length > 30 ? 30 : fcmToken.length)}...');
-        print('✅ [DEBUG] [PushNotificationService] Token (últimos 10 chars): ...${fcmToken.substring(fcmToken.length - 10)}');
-        print('✅ [DEBUG] [PushNotificationService] Tamanho: ${fcmToken.length} caracteres');
+        debugLogger.addLog('✅ [PushNotificationService] Token FCM obtido com sucesso', level: LogLevel.info);
       } catch (e) {
         debugLogger.addLog('❌ [PushNotificationService] Erro ao obter token FCM: $e', level: LogLevel.error);
-        print('❌ [DEBUG] [PushNotificationService] Erro ao obter token FCM: $e');
         return null;
       }
 
       // 3. Enviar token para o backend
       try {
-        debugLogger.addLog('📱 [PushNotificationService] Preparando envio do token para o backend...', level: LogLevel.info);
-        print('📱 [DEBUG] [PushNotificationService] Preparando envio do token para o backend...');
+        debugLogger.addLog('📱 [PushNotificationService] Enviando token para o backend...', level: LogLevel.info);
         
         // Obter token de autenticação do app (se disponível)
         final authService = AuthService();
@@ -3206,12 +3284,6 @@ class PushNotificationService {
         
         if (appToken != null) {
           headers['Authorization'] = 'Bearer $appToken';
-          debugLogger.addLog('📱 [PushNotificationService] Enviando token com autenticação', level: LogLevel.info);
-          print('📱 [DEBUG] [PushNotificationService] Enviando token com autenticação');
-          print('📱 [DEBUG] [PushNotificationService] App token presente: ${appToken.substring(0, 20)}...');
-        } else {
-          debugLogger.addLog('📱 [PushNotificationService] Enviando token sem autenticação (busca por email)', level: LogLevel.info);
-          print('📱 [DEBUG] [PushNotificationService] Enviando token sem autenticação (busca por email)');
         }
 
         final requestData = {
@@ -3220,67 +3292,35 @@ class PushNotificationService {
           'platform': platform,
         };
 
-        debugLogger.addLog('📤 [PushNotificationService] Enviando para: $_backendUrl', level: LogLevel.info);
-        print('📤 [DEBUG] [PushNotificationService] Enviando para: $_backendUrl');
-        print('📤 [DEBUG] [PushNotificationService] Dados: email=$email, platform=$platform, token_length=${fcmToken.length}');
-
-        final requestStartTime = DateTime.now();
         final response = await _dio.post(
           '/api/push-token',
           data: requestData,
           options: Options(headers: headers),
         );
-        final requestDuration = DateTime.now().difference(requestStartTime);
-
-        debugLogger.addLog('📥 [PushNotificationService] Resposta do backend: status=${response.statusCode} em ${requestDuration.inMilliseconds}ms', level: LogLevel.info);
-        print('📥 [DEBUG] [PushNotificationService] Resposta do backend: status=${response.statusCode}');
-        print('📥 [DEBUG] [PushNotificationService] Duração da requisição: ${requestDuration.inMilliseconds}ms');
         
         if (response.statusCode == 200 || response.statusCode == 201) {
-          final responseData = response.data;
           debugLogger.addLog('✅ [PushNotificationService] Token FCM registrado com sucesso no backend', level: LogLevel.info);
-          print('✅ [DEBUG] [PushNotificationService] Token FCM registrado com sucesso no backend');
-          if (responseData is Map) {
-            print('📋 [DEBUG] [PushNotificationService] Dados da resposta: $responseData');
-          }
-          return fcmToken; // Retornar o token FCM
+          return fcmToken;
         } else {
           debugLogger.addLog('⚠️ [PushNotificationService] Resposta inesperada do backend: ${response.statusCode}', level: LogLevel.warning);
-          print('⚠️ [DEBUG] [PushNotificationService] Resposta inesperada do backend: ${response.statusCode}');
-          print('⚠️ [DEBUG] [PushNotificationService] Dados da resposta: ${response.data}');
           return null;
         }
       } on DioException catch (e) {
-        debugLogger.addLog('❌ [PushNotificationService] Erro DioException: ${e.type}, Status: ${e.response?.statusCode}', level: LogLevel.error);
-        print('❌ [DEBUG] [PushNotificationService] Erro DioException ao enviar token para o backend:');
-        print('   Tipo: ${e.type}');
-        print('   Status: ${e.response?.statusCode}');
-        print('   Mensagem: ${e.message}');
-        if (e.response != null) {
-          print('   Resposta: ${e.response?.data}');
-        }
+        debugLogger.addLog('❌ [PushNotificationService] Erro ao enviar token: ${e.type}, Status: ${e.response?.statusCode}', level: LogLevel.error);
         
         // Se for erro 422 (validação) ou 404 (usuário não encontrado), retornar null
         if (e.response?.statusCode == 422 || e.response?.statusCode == 404) {
-          debugLogger.addLog('❌ [PushNotificationService] Erro de validação ou usuário não encontrado', level: LogLevel.error);
-          print('❌ [DEBUG] [PushNotificationService] Erro de validação ou usuário não encontrado');
           return null;
         }
         
         // Para outros erros, considerar sucesso parcial (token foi obtido)
-        debugLogger.addLog('⚠️ [PushNotificationService] Considerando sucesso parcial (token FCM obtido, mas não salvo no backend)', level: LogLevel.warning);
-        print('⚠️ [DEBUG] [PushNotificationService] Considerando sucesso parcial (token FCM obtido, mas não salvo no backend)');
-        return fcmToken; // Retornar o token mesmo com erro parcial
+        return fcmToken;
       } catch (e) {
-        debugLogger.addLog('❌ [PushNotificationService] Erro geral ao enviar token para o backend: $e', level: LogLevel.error);
-        print('❌ [DEBUG] [PushNotificationService] Erro geral ao enviar token para o backend: $e');
-        print('⚠️ [DEBUG] [PushNotificationService] Considerando sucesso parcial (token FCM obtido, mas não salvo no backend)');
+        debugLogger.addLog('❌ [PushNotificationService] Erro geral ao enviar token: $e', level: LogLevel.error);
         return fcmToken; // Retornar o token mesmo com erro parcial
       }
     } catch (e, stackTrace) {
       debugLogger.addLog('❌ [PushNotificationService] Erro geral ao registrar token: $e', level: LogLevel.error);
-      print('❌ [DEBUG] [PushNotificationService] Erro geral ao registrar token: $e');
-      print('❌ [DEBUG] [PushNotificationService] Stack trace: $stackTrace');
       return null;
     }
   }
