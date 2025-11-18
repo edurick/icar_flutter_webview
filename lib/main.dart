@@ -127,8 +127,101 @@ void debugPrint(Object? object) {
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  print('📱 Notificação em background recebida: ${message.messageId}');
-  print('📱 Dados: ${message.data}');
+  print('📱 [BACKGROUND] Notificação em background recebida: ${message.messageId}');
+  print('📱 [BACKGROUND] Título: ${message.notification?.title}');
+  print('📱 [BACKGROUND] Corpo: ${message.notification?.body}');
+  print('📱 [BACKGROUND] Dados: ${message.data}');
+  print('📱 [BACKGROUND] Tem notification: ${message.notification != null}');
+  
+  // Em dispositivos Samsung, mesmo com o campo 'notification', as notificações podem não aparecer
+  // se o app estiver em background. Vamos garantir que a notificação seja exibida usando
+  // notificações locais como fallback.
+  
+  try {
+    final FlutterLocalNotificationsPlugin localNotifications = FlutterLocalNotificationsPlugin();
+    
+    // Inicializar notificações locais se ainda não estiverem inicializadas
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+    
+    await localNotifications.initialize(initSettings);
+    
+    // Criar canal de notificação para Android
+    if (Platform.isAndroid) {
+      const androidChannel = AndroidNotificationChannel(
+        'high_importance_channel',
+        'Notificações Importantes',
+        description: 'Este canal é usado para notificações importantes',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+      );
+      
+      await localNotifications
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(androidChannel);
+    }
+    
+    // Exibir notificação local se tiver conteúdo
+    if (message.notification != null) {
+      final androidDetails = AndroidNotificationDetails(
+        'high_importance_channel',
+        'Notificações Importantes',
+        channelDescription: 'Este canal é usado para notificações importantes',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+        playSound: true,
+        enableVibration: true,
+        icon: '@drawable/ic_notification_car',
+      );
+      
+      final iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      
+      final details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+      
+      // Criar payload JSON para a notificação local
+      final payloadJson = jsonEncode(message.data);
+      
+      await localNotifications.show(
+        message.hashCode,
+        message.notification?.title ?? 'Nova notificação',
+        message.notification?.body ?? '',
+        details,
+        payload: payloadJson,
+      );
+      
+      print('✅ [BACKGROUND] Notificação local exibida com sucesso');
+    } else {
+      print('⚠️ [BACKGROUND] Notificação sem campo notification - não foi possível exibir');
+    }
+  } catch (e, stackTrace) {
+    print('❌ [BACKGROUND] Erro ao exibir notificação local: $e');
+    print('❌ [BACKGROUND] Stack trace: $stackTrace');
+    
+    // Log adicional para debug
+    if (message.notification == null) {
+      print('⚠️ [BACKGROUND] Notificação sem campo notification - pode não aparecer automaticamente');
+    } else {
+      print('✅ [BACKGROUND] Notificação com campo notification - Firebase deve exibir automaticamente');
+    }
+  }
 }
 
 void main() async {
@@ -209,6 +302,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   Timer? _emailListenerDebounceTimer;  // Timer para debounce do listener de email
   String? _pendingEmailRegistration;  // Email pendente de registro (para debounce)
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+  Map<String, dynamic>? _pendingNotificationData;  // Dados da notificação pendente para salvar no sessionStorage
 
   @override
   void initState() {
@@ -314,6 +408,59 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               print('✅ Página com auth_success carregada');
             }
 
+            // Se há dados de notificação pendentes e estamos na página de chat, salvar no sessionStorage
+            if (_pendingNotificationData != null && url.contains('/chat')) {
+              print('💬 Página de chat carregada, salvando dados da notificação no sessionStorage...');
+              
+              // Aguardar um pouco para garantir que a página está totalmente carregada
+              Future.delayed(const Duration(milliseconds: 300), () {
+                _saveNotificationDataToSessionStorage(_pendingNotificationData!);
+                
+                // Aguardar mais um pouco e disparar evento para o frontend detectar os dados
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  final triggerCode = '''
+                    (function() {
+                      try {
+                        // Verificar se os dados foram salvos
+                        const oficinaData = sessionStorage.getItem('oficinaData');
+                        const oficinaId = sessionStorage.getItem('oficinaId');
+                        const sosId = sessionStorage.getItem('sosId');
+                        
+                        console.log('🔍 [Flutter] Verificando dados salvos:');
+                        console.log('   oficinaData:', oficinaData);
+                        console.log('   oficinaId:', oficinaId);
+                        console.log('   sosId:', sosId);
+                        
+                        // Disparar evento customizado para o frontend detectar os dados
+                        window.dispatchEvent(new CustomEvent('notificationDataLoaded', {
+                          detail: {
+                            oficina_id: ${_pendingNotificationData!['oficina_id']},
+                            sos_id: ${_pendingNotificationData!['sos_id'] ?? 'null'}
+                          }
+                        }));
+                        console.log('✅ [Flutter] Evento notificationDataLoaded disparado');
+                        
+                        // Forçar reload da página se os dados não estiverem sendo detectados
+                        if (oficinaData && oficinaId) {
+                          console.log('🔄 [Flutter] Dados confirmados, forçando reload do componente...');
+                          // Tentar recarregar o componente React se possível
+                          if (typeof window.location !== 'undefined') {
+                            // Não recarregar a página, apenas disparar evento
+                            window.dispatchEvent(new Event('storage'));
+                          }
+                        }
+                      } catch(e) {
+                        console.error('❌ [Flutter] Erro ao disparar evento:', e);
+                      }
+                    })();
+                  ''';
+                  controller.runJavaScript(triggerCode);
+                });
+              });
+              
+              _pendingNotificationData = null; // Limpar após salvar
+            }
+
             // Não restaurar sessão durante o fluxo do Apple Sign In
             if (!_isInAuthFlow) {
               _restoreAuthIfNeeded();
@@ -358,8 +505,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               if (token != null && userParam != null) {
                 try {
                   final user = jsonDecode(Uri.decodeComponent(userParam));
-                  _authService.saveAuthData(token, user);
-                  print('✅ Token salvo no Flutter também');
+                  // Para OAuth (Google/Apple), sempre salvar com rememberMe=true
+                  _authService.saveAuthData(token, user, rememberMe: true);
+                  print('✅ Token salvo no Flutter também (OAuth - rememberMe ativado)');
 
                   // Enviar token para WebView também (sem await pois não é async)
                   _sendTokenToWebView(token, user, provider: 'google');
@@ -494,7 +642,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       if (token != null && userParam != null) {
         try {
           final user = jsonDecode(Uri.decodeComponent(userParam));
-          await _authService.saveAuthData(token, user);
+          // Para deep links, verificar se há rememberMe na URL ou sempre salvar (OAuth)
+          final rememberMe = uri.queryParameters['rememberMe'] == 'true' || true;
+          await _authService.saveAuthData(token, user, rememberMe: rememberMe);
 
           print('✅ Login successful via deep link');
           _showSuccess('Login realizado com sucesso!');
@@ -526,10 +676,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _sendTokenToWebView(String token, Map<String, dynamic> user, {String provider = 'google'}) async {
+  Future<void> _sendTokenToWebView(String token, Map<String, dynamic> user, {String provider = 'google', bool rememberMe = true}) async {
     try {
       final userJson = jsonEncode(user);
-      print('🔄 Enviando token para WebView: $token');
+      print('🔄 Enviando token para WebView: $token (rememberMe: $rememberMe)');
 
       // Extrair email do objeto user
       final email = _extractEmailFromUser(user);
@@ -553,16 +703,24 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         localStorage.setItem('auth_token', '$token');
         localStorage.setItem('authToken', '$token');
         localStorage.setItem('user', '$userJson');
+        localStorage.setItem('rememberMe', '$rememberMe');
         $emailJsCode
 
-        console.log('Flutter: Token do $provider Auth salvo no localStorage');
+        // Também salvar no sessionStorage para a sessão atual
+        sessionStorage.setItem('access_token', '$token');
+        sessionStorage.setItem('auth_token', '$token');
+        sessionStorage.setItem('authToken', '$token');
+        sessionStorage.setItem('token', '$token');
+
+        console.log('Flutter: Token do $provider Auth salvo no localStorage (rememberMe: $rememberMe)');
 
         // Disparar evento customizado para o frontend processar
         window.dispatchEvent(new CustomEvent('authSuccess', {
           detail: {
             token: '$token',
             user: $userJson,
-            provider: '$provider'
+            provider: '$provider',
+            rememberMe: $rememberMe
           }
         }));
 
@@ -574,6 +732,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           token: '$token',
           user: $userJson,
           provider: '$provider',
+          rememberMe: $rememberMe,
           source: 'flutter'
         }, '*');
 
@@ -602,11 +761,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   Future<void> _restoreAuthIfNeeded() async {
     try {
+      // Verificar se "lembrar de mim" está ativo antes de restaurar
+      final shouldRemember = await _authService.shouldRememberMe();
+      if (!shouldRemember) {
+        print('ℹ️ "Lembrar de mim" não está ativo - não restaurando sessão');
+        return;
+      }
+
       final token = await _authService.getToken();
       final user = await _authService.getUser();
 
       if (token != null && user != null) {
-        print('🔄 Restaurando sessão do usuário...');
+        print('🔄 Restaurando sessão do usuário (Lembrar de mim ativo)...');
         _lastKnownToken = token;
 
         // Restaurar dados completos no localStorage e sessionStorage
@@ -745,8 +911,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         // Android: usar permission_handler e Geolocator
         print('🤖 Android: Verificando permissão via permission_handler...');
         
-        // Verificar permissão básica de localização
-        var locationStatus = await Permission.location.status;
+        // Verificar permissão básica de localização (usar locationWhenInUse no Android)
+        var locationStatus = Platform.isAndroid 
+            ? await Permission.locationWhenInUse.status
+            : await Permission.location.status;
         
         // Atualizar flag se estiver permanentemente negada
         if (locationStatus.isPermanentlyDenied) {
@@ -766,7 +934,15 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             return;
           }
           
-          locationStatus = await Permission.location.request();
+          // Pequeno delay para garantir que o diálogo foi completamente fechado
+          await Future.delayed(const Duration(milliseconds: 300));
+          
+          // No Android, usar locationWhenInUse é mais confiável
+          if (Platform.isAndroid) {
+            locationStatus = await Permission.locationWhenInUse.request();
+          } else {
+            locationStatus = await Permission.location.request();
+          }
           
           // Verificar novamente após solicitar
           if (locationStatus.isPermanentlyDenied) {
@@ -916,9 +1092,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void _startLocationMonitoring() {
     _locationMonitorTimer?.cancel();
 
+    print('📍 Iniciando monitoramento de localização via localStorage...');
+
     // Iniciar timer para verificar requisições de localização
     _locationMonitorTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
-      if (_isProcessingLocationRequest) return;
+      if (_isProcessingLocationRequest) {
+        return; // Já está processando uma requisição
+      }
 
       final jsCode = '''
         (function() {
@@ -934,13 +1114,22 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       try {
         final result = await controller.runJavaScriptReturningResult(jsCode);
-        final requestStr = result.toString();
+        final requestStr = result.toString().trim();
+        
+        // Remover aspas se o resultado vier como string JSON
+        String cleanRequestStr = requestStr;
+        if (cleanRequestStr.startsWith('"') && cleanRequestStr.endsWith('"')) {
+          cleanRequestStr = cleanRequestStr.substring(1, cleanRequestStr.length - 1);
+          cleanRequestStr = cleanRequestStr.replaceAll('\\"', '"');
+        }
 
-        if (requestStr != 'null' && requestStr.isNotEmpty) {
-          _handleLocationRequest(requestStr);
+        if (cleanRequestStr != 'null' && cleanRequestStr.isNotEmpty && cleanRequestStr != '') {
+          print('📍 Requisição de localização detectada no localStorage: $cleanRequestStr');
+          _handleLocationRequest(cleanRequestStr);
         }
       } catch (e) {
-        // Erro ao executar JavaScript, ignorar
+        // Erro ao executar JavaScript, ignorar silenciosamente
+        // (pode acontecer se a página ainda não carregou completamente)
       }
     });
   }
@@ -1057,8 +1246,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         // Android: usar permission_handler e Geolocator
         print('🤖 Android: Verificando permissão via permission_handler...');
         
-        // Verificar permissão de localização
-        var locationStatus = await Permission.location.status;
+        // Verificar permissão de localização (usar locationWhenInUse no Android)
+        var locationStatus = Platform.isAndroid 
+            ? await Permission.locationWhenInUse.status
+            : await Permission.location.status;
         print('📱 Status da permissão de localização: $locationStatus');
 
         // Se está permanentemente negada, enviar erro e retornar sem tentar novamente
@@ -1080,8 +1271,40 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         }
 
         if (!locationStatus.isGranted) {
-          print('⚠️ Permissão de localização não concedida, solicitando...');
-          locationStatus = await Permission.location.request();
+          print('⚠️ Permissão de localização não concedida, mostrando rationale...');
+          
+          // Mostrar diálogo de rationale antes de solicitar permissão
+          if (mounted) {
+            final shouldRequest = await _showLocationRationale();
+            if (!shouldRequest) {
+              print('❌ Usuário cancelou a solicitação de permissão');
+              await _sendLocationError('Permissão de localização cancelada pelo usuário', requestId);
+              _isProcessingLocationRequest = false;
+              return;
+            }
+            
+            // Pequeno delay para garantir que o diálogo foi completamente fechado
+            await Future.delayed(const Duration(milliseconds: 300));
+          }
+          
+          print('⚠️ Solicitando permissão de localização...');
+          // No Android, usar locationWhenInUse é mais confiável
+          try {
+            if (Platform.isAndroid) {
+              print('📱 Android: Solicitando Permission.locationWhenInUse...');
+              locationStatus = await Permission.locationWhenInUse.request();
+              print('📱 Android: Resultado da solicitação: $locationStatus');
+            } else {
+              print('📱 iOS: Solicitando Permission.location...');
+              locationStatus = await Permission.location.request();
+              print('📱 iOS: Resultado da solicitação: $locationStatus');
+            }
+          } catch (e) {
+            print('❌ Erro ao solicitar permissão: $e');
+            await _sendLocationError('Erro ao solicitar permissão de localização: $e', requestId);
+            _isProcessingLocationRequest = false;
+            return;
+          }
           print('📱 Status após solicitar: $locationStatus');
           
           // Verificar novamente se ficou permanentemente negada
@@ -1344,10 +1567,25 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   void _injectJavaScriptChannels() {
     const jsCode = '''
+      // Criar wrapper para comunicação com Flutter WebView
       window.FlutterWebViewChannel = {
         postMessage: function(message) {
-          if (window.FlutterWebView && window.FlutterWebView.postMessage) {
-            window.FlutterWebView.postMessage(JSON.stringify(message));
+          try {
+            // Tentar usar o channel FlutterWebView diretamente (criado pelo addJavaScriptChannel)
+            if (typeof FlutterWebView !== 'undefined' && FlutterWebView.postMessage) {
+              FlutterWebView.postMessage(JSON.stringify(message));
+              console.log('✅ Mensagem enviada via FlutterWebView.postMessage');
+              return;
+            }
+            // Fallback: tentar window.FlutterWebView (caso esteja disponível)
+            if (window.FlutterWebView && window.FlutterWebView.postMessage) {
+              window.FlutterWebView.postMessage(JSON.stringify(message));
+              console.log('✅ Mensagem enviada via window.FlutterWebView.postMessage');
+              return;
+            }
+            console.warn('⚠️ FlutterWebView channel não disponível');
+          } catch (e) {
+            console.error('❌ Erro ao enviar mensagem para Flutter:', e);
           }
         }
       };
@@ -1386,18 +1624,31 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           timestamp: Date.now()
         };
         
-        console.log('React: Solicitando localização do Flutter via canal direto', request);
+        console.log('📍 React: Solicitando localização do Flutter', request);
         
-        // Enviar via canal JavaScript direto
-        if (window.FlutterWebViewChannel && window.FlutterWebViewChannel.postMessage) {
-          window.FlutterWebViewChannel.postMessage({
-            type: 'locationRequest',
-            ...request
-          });
+        // Método 1: Tentar enviar via canal JavaScript direto (mais rápido)
+        try {
+          if (window.FlutterWebViewChannel && window.FlutterWebViewChannel.postMessage) {
+            console.log('📍 Tentando enviar via FlutterWebViewChannel...');
+            window.FlutterWebViewChannel.postMessage({
+              type: 'locationRequest',
+              ...request
+            });
+            console.log('✅ Mensagem enviada via FlutterWebViewChannel');
+          } else {
+            console.warn('⚠️ FlutterWebViewChannel não disponível');
+          }
+        } catch (e) {
+          console.error('❌ Erro ao enviar via FlutterWebViewChannel:', e);
         }
         
-        // Também enviar via localStorage (fallback)
-        localStorage.setItem('flutter_location_request', JSON.stringify(request));
+        // Método 2: Sempre enviar via localStorage também (garantir que será processado)
+        try {
+          localStorage.setItem('flutter_location_request', JSON.stringify(request));
+          console.log('✅ Requisição salva no localStorage como fallback');
+        } catch (e) {
+          console.error('❌ Erro ao salvar no localStorage:', e);
+        }
         
         // Retornar promise para o React aguardar
         return new Promise((resolve, reject) => {
@@ -1893,7 +2144,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         _handleOpenGoogleAuth(data['url']);
       } else if (type == 'authSuccess') {
         print('✅ Autenticação bem-sucedida!');
-        _handleAuthSuccess(data['token'], data['user']);
+        final rememberMe = data['rememberMe'] == true || data['rememberMe'] == 'true';
+        _handleAuthSuccess(data['token'], data['user'], rememberMe: rememberMe);
       } else if (type == 'closeWebView') {
         print('Fechando overlay de autenticação...');
         _handleCloseWebView();
@@ -1981,8 +2233,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         final token = response.data['token'];
         final user = response.data['user'];
 
-        // Salvar dados localmente
-        await _authService.saveAuthData(token, user);
+        // Salvar dados localmente (OAuth Apple - sempre salvar com rememberMe)
+        await _authService.saveAuthData(token, user, rememberMe: true);
 
         // Enviar para o WebView com provider 'apple'
         await _sendTokenToWebView(token, user, provider: 'apple');
@@ -2098,14 +2350,17 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     }
   }
 
-  void _handleAuthSuccess(String token, Map<String, dynamic> user) async {
+  void _handleAuthSuccess(String token, Map<String, dynamic> user, {bool rememberMe = false}) async {
     try {
-      // REMOVIDO - não precisamos mais disso
-      // O backend vai enviar direto para o React
-      print('❌ DEPRECATED: _handleAuthSuccess não deveria ser chamado mais');
-      print('Token recebido mas será ignorado - backend -> frontend direto agora');
+      print('✅ Processando autenticação bem-sucedida (rememberMe: $rememberMe)');
+      
+      // Salvar dados de autenticação no Flutter apenas se "lembrar de mim" estiver ativo
+      await _authService.saveAuthData(token, user, rememberMe: rememberMe);
+      _lastKnownToken = rememberMe ? token : null;
+      
+      print('✅ Autenticação processada com sucesso');
     } catch (e) {
-      print('Erro: $e');
+      print('❌ Erro ao processar autenticação: $e');
     }
   }
 
@@ -2120,6 +2375,9 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
   void _handleLogout() async {
     try {
+      print('🚪 Iniciando processo de logout...');
+      
+      // Limpar dados de autenticação no Flutter
       await _authService.logout();
       _lastKnownToken = null;
       _lastRegisteredEmail = null; // Limpar email registrado ao fazer logout
@@ -2127,25 +2385,60 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       _firebaseBlockedUntil = null; // Limpar bloqueio do Firebase
       _lastFcmRegistrationAttempt = null; // Limpar tentativa de registro
       
+      // Limpar todos os dados de autenticação na WebView
       final jsCode = '''
+        // Limpar localStorage
         localStorage.removeItem('access_token');
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('token');
         localStorage.removeItem('user');
+        localStorage.removeItem('nameUser');
+        localStorage.removeItem('userName');
+        localStorage.removeItem('idUser');
+        localStorage.removeItem('userId');
+        localStorage.removeItem('user_id');
+        localStorage.removeItem('rememberMe');
+        localStorage.removeItem('userEmail');
+        localStorage.removeItem('user_email');
+        localStorage.removeItem('email');
         
+        // Limpar sessionStorage
+        sessionStorage.removeItem('access_token');
+        sessionStorage.removeItem('auth_token');
+        sessionStorage.removeItem('authToken');
+        sessionStorage.removeItem('token');
+        sessionStorage.removeItem('user');
+        sessionStorage.removeItem('nameUser');
+        sessionStorage.removeItem('userName');
+        sessionStorage.removeItem('idUser');
+        sessionStorage.removeItem('userId');
+        sessionStorage.removeItem('user_id');
+        sessionStorage.removeItem('userEmail');
+        
+        // Disparar evento de logout
         window.postMessage({
           type: 'logoutSuccess',
           source: 'flutter'
         }, '*');
         
-        console.log('Flutter: Logout realizado com sucesso');
+        // Disparar evento customizado
+        window.dispatchEvent(new CustomEvent('logout', {
+          detail: {
+            source: 'flutter'
+          }
+        }));
+        
+        console.log('✅ Flutter: Logout realizado com sucesso - todos os dados foram limpos');
       ''';
       
       await controller.runJavaScript(jsCode);
-      print('Logout realizado com sucesso');
+      print('✅ Logout realizado com sucesso - dados limpos no Flutter e WebView');
       
       // Recarregar página de login
       controller.loadRequest(Uri.parse('https://icarfront.vercel.app/?source=mobile'));
     } catch (e) {
-      print('Erro ao fazer logout: $e');
+      print('❌ Erro ao fazer logout: $e');
     }
   }
 
@@ -2155,7 +2448,28 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       // Inicializar notificações locais
       await _initializeLocalNotifications();
       
-      // Solicitar permissão de notificações
+      // Solicitar permissões do Android (especialmente importante para Android 13+ e Samsung)
+      if (Platform.isAndroid) {
+        // Solicitar permissão POST_NOTIFICATIONS (Android 13+)
+        final notificationPermission = await Permission.notification.request();
+        print('📱 Permissão POST_NOTIFICATIONS: $notificationPermission');
+        
+        // Solicitar permissão para ignorar otimização de bateria (especialmente importante para Samsung)
+        try {
+          final batteryOptimizationStatus = await Permission.ignoreBatteryOptimizations.status;
+          if (batteryOptimizationStatus.isDenied) {
+            print('📱 Solicitando permissão para ignorar otimização de bateria...');
+            final batteryResult = await Permission.ignoreBatteryOptimizations.request();
+            print('📱 Permissão de otimização de bateria: $batteryResult');
+          } else {
+            print('✅ Permissão de otimização de bateria já concedida');
+          }
+        } catch (e) {
+          print('⚠️ Erro ao solicitar permissão de otimização de bateria: $e');
+        }
+      }
+      
+      // Solicitar permissão de notificações do Firebase
       final messaging = FirebaseMessaging.instance;
       
       NotificationSettings settings = await messaging.requestPermission(
@@ -2165,7 +2479,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         provisional: false,
       );
 
-      print('📱 Permissão de notificações: ${settings.authorizationStatus}');
+      print('📱 Permissão de notificações Firebase: ${settings.authorizationStatus}');
 
       if (settings.authorizationStatus == AuthorizationStatus.authorized) {
         print('✅ Permissão de notificações concedida');
@@ -2189,12 +2503,14 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
         print('📱 Notificação aberta: ${message.messageId}');
         print('📱 Dados: ${message.data}');
+        _handleNotificationClick(message);
       });
 
       // Verificar se o app foi aberto por uma notificação
       RemoteMessage? initialMessage = await messaging.getInitialMessage();
       if (initialMessage != null) {
         print('📱 App aberto por notificação: ${initialMessage.messageId}');
+        _handleNotificationClick(initialMessage);
       }
     } catch (e) {
       print('❌ Erro ao inicializar push notifications: $e');
@@ -2220,6 +2536,54 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       onDidReceiveNotificationResponse: (NotificationResponse response) {
         print('📱 Notificação local clicada: ${response.id}');
         print('📱 Payload: ${response.payload}');
+        
+        // Tentar parsear o payload como dados JSON
+        if (response.payload != null && response.payload!.isNotEmpty) {
+          try {
+            // O payload vem como JSON string, precisamos parsear
+            final payloadMap = jsonDecode(response.payload!) as Map<String, dynamic>;
+            
+            // Verificar se é uma notificação de chat
+            if (payloadMap['type'] == 'chat') {
+              // Criar RemoteMessage simulado para usar a mesma função de navegação
+              final simulatedMessage = RemoteMessage(
+                messageId: response.id.toString(),
+                data: payloadMap,
+              );
+              _handleNotificationClick(simulatedMessage);
+            }
+          } catch (e) {
+            print('❌ Erro ao processar payload da notificação local: $e');
+            print('   Tentando método alternativo...');
+            
+            // Fallback: tentar extrair dados básicos do payload string
+            try {
+              final payloadString = response.payload!;
+              if (payloadString.contains('type') && payloadString.contains('chat')) {
+                final oficinaIdMatch = RegExp(r'oficina_id[:\s]*(\d+)').firstMatch(payloadString);
+                final sosIdMatch = RegExp(r'sos_id[:\s]*(\d+)').firstMatch(payloadString);
+                
+                if (oficinaIdMatch != null) {
+                  final payloadMap = <String, dynamic>{
+                    'type': 'chat',
+                    'oficina_id': oficinaIdMatch.group(1),
+                  };
+                  if (sosIdMatch != null) {
+                    payloadMap['sos_id'] = sosIdMatch.group(1);
+                  }
+                  
+                  final simulatedMessage = RemoteMessage(
+                    messageId: response.id.toString(),
+                    data: payloadMap,
+                  );
+                  _handleNotificationClick(simulatedMessage);
+                }
+              }
+            } catch (e2) {
+              print('❌ Erro no método alternativo: $e2');
+            }
+          }
+        }
       },
     );
 
@@ -2309,11 +2673,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     print('📱 Criando AndroidNotificationDetails com largeIcon: ${largeIconPath ?? "null"}');
     
     // O smallIcon (icon) no Android deve ser um recurso drawable, não um arquivo
-    // O @mipmap/ic_launcher já deve ser o ícone do iCar
+    // Usar @drawable/ic_notification_car conforme configurado no AndroidManifest.xml
     // Se app_icon_url estiver presente nos dados, logamos para referência
     String? appIconUrl = message.data['app_icon_url'];
     if (appIconUrl != null && appIconUrl.isNotEmpty && appIconUrl != 'null') {
-      print('📱 Ícone do iCar disponível em app_icon_url: $appIconUrl (usando @mipmap/ic_launcher como smallIcon)');
+      print('📱 Ícone do iCar disponível em app_icon_url: $appIconUrl (usando @drawable/ic_notification_car como smallIcon)');
     }
     
     final androidDetails = AndroidNotificationDetails(
@@ -2326,8 +2690,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       playSound: true,
       enableVibration: true,
       largeIcon: largeIconPath != null ? FilePathAndroidBitmap(largeIconPath) : null,
-      // Usar ícone do iCar como smallIcon (ic_launcher deve ser o ícone do iCar)
-      icon: '@mipmap/ic_launcher', // Ícone do iCar
+      // Usar ícone de notificação específico do iCar (ic_notification_car)
+      icon: '@drawable/ic_notification_car', // Ícone de notificação do iCar
     );
     
     print('📱 AndroidNotificationDetails criado com largeIcon: ${androidDetails.largeIcon != null}');
@@ -2343,13 +2707,179 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       iOS: iosDetails,
     );
 
+    // Criar payload JSON para a notificação local
+    final payloadJson = jsonEncode(message.data);
+    
     await _localNotifications.show(
       message.hashCode,
       notification.title ?? 'Nova notificação',
       notification.body ?? '',
       details,
-      payload: message.data.toString(),
+      payload: payloadJson,
     );
+  }
+
+  // Função para salvar dados da notificação no sessionStorage
+  void _saveNotificationDataToSessionStorage(Map<String, dynamic> data) {
+    final oficinaId = data['oficina_id'];
+    final sosId = data['sos_id'];
+    final oficinaNome = data['oficina_nome'] ?? 'Oficina';
+    
+    final sosIdStr = sosId?.toString() ?? '';
+    final oficinaIdStr = oficinaId?.toString() ?? '';
+    final oficinaNomeEscaped = oficinaNome.replaceAll("'", "\\'").replaceAll("\n", "\\n").replaceAll("\r", "");
+    
+    print('💾 Salvando dados no sessionStorage:');
+    print('   oficinaId: $oficinaIdStr');
+    print('   sosId: $sosIdStr');
+    print('   oficinaNome: $oficinaNomeEscaped');
+    
+    final jsCode = '''
+      (function() {
+        try {
+          console.log('💾 [Flutter] Iniciando salvamento de dados no sessionStorage...');
+          
+          // Salvar dados da oficina no sessionStorage
+          const oficinaData = {
+            id: parseInt('$oficinaIdStr'),
+            name: '$oficinaNomeEscaped',
+            sos_id: ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "parseInt('$sosIdStr')" : 'null'}
+          };
+          
+          sessionStorage.setItem('oficinaData', JSON.stringify(oficinaData));
+          sessionStorage.setItem('oficinaId', '$oficinaIdStr');
+          
+          ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "sessionStorage.setItem('sosId', '$sosIdStr');" : ''}
+          ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "sessionStorage.setItem('current_sos_id', '$sosIdStr');" : ''}
+          
+          // Verificar se foi salvo corretamente
+          const savedOficinaData = sessionStorage.getItem('oficinaData');
+          const savedOficinaId = sessionStorage.getItem('oficinaId');
+          const savedSosId = sessionStorage.getItem('sosId');
+          const savedCurrentSosId = sessionStorage.getItem('current_sos_id');
+          
+          console.log('✅ [Flutter] Dados salvos no sessionStorage:');
+          console.log('   oficinaData:', savedOficinaData);
+          console.log('   oficinaId:', savedOficinaId);
+          console.log('   sosId:', savedSosId);
+          console.log('   current_sos_id:', savedCurrentSosId);
+          
+          // Disparar evento para o componente detectar
+          window.dispatchEvent(new StorageEvent('storage', {
+            key: 'oficinaData',
+            newValue: savedOficinaData
+          }));
+          
+          // Forçar reload se estiver na página de chat
+          if (window.location.pathname.includes('/chat')) {
+            console.log('🔄 [Flutter] Detectado que está na página de chat, disparando evento de reload...');
+            window.dispatchEvent(new CustomEvent('chatDataUpdated', {
+              detail: {
+                oficinaId: '$oficinaIdStr',
+                sosId: '${sosIdStr.isNotEmpty && sosIdStr != '0' ? sosIdStr : ''}'
+              }
+            }));
+          }
+        } catch(e) {
+          console.error('❌ [Flutter] Erro ao salvar dados no sessionStorage:', e);
+          console.error('   Stack:', e.stack);
+        }
+      })();
+    ''';
+    
+    controller.runJavaScript(jsCode);
+    print('💾 Comando JavaScript enviado para salvar dados');
+  }
+
+  // Função para tratar clique em notificação e navegar para o chat
+  Future<void> _handleNotificationClick(RemoteMessage message) async {
+    print('🔍 Processando clique na notificação...');
+    print('📱 Tipo: ${message.data['type']}');
+    print('📱 Dados completos: ${message.data}');
+    
+    // Verificar se é uma notificação de chat
+    if (message.data['type'] == 'chat') {
+      final oficinaId = message.data['oficina_id'];
+      final sosId = message.data['sos_id'];
+      final oficinaNome = message.data['oficina_nome'] ?? 'Oficina';
+      
+      print('💬 Notificação de chat detectada');
+      print('   Oficina ID: $oficinaId');
+      print('   SOS ID: $sosId');
+      print('   Oficina Nome: $oficinaNome');
+      
+      if (oficinaId != null) {
+        // Preparar dados
+        final dataToSave = {
+          'oficina_id': oficinaId,
+          'sos_id': sosId,
+          'oficina_nome': oficinaNome,
+        };
+        
+        // Salvar dados no sessionStorage ANTES de navegar
+        // Isso garante que os dados estejam disponíveis quando o componente carregar
+        final sosIdStr = sosId?.toString() ?? '';
+        final oficinaIdStr = oficinaId.toString();
+        final oficinaNomeEscaped = oficinaNome.replaceAll("'", "\\'").replaceAll("\n", "\\n").replaceAll("\r", "");
+        
+        print('💾 Salvando dados no sessionStorage ANTES de navegar...');
+        final preSaveJsCode = '''
+          (function() {
+            try {
+              console.log('💾 [Flutter] Salvando dados ANTES da navegação...');
+              
+              const oficinaData = {
+                id: parseInt('$oficinaIdStr'),
+                name: '$oficinaNomeEscaped',
+                sos_id: ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "parseInt('$sosIdStr')" : 'null'}
+              };
+              
+              sessionStorage.setItem('oficinaData', JSON.stringify(oficinaData));
+              sessionStorage.setItem('oficinaId', '$oficinaIdStr');
+              
+              ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "sessionStorage.setItem('sosId', '$sosIdStr');" : ''}
+              ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "sessionStorage.setItem('current_sos_id', '$sosIdStr');" : ''}
+              
+              console.log('✅ [Flutter] Dados salvos ANTES da navegação:', {
+                oficinaData: JSON.stringify(oficinaData),
+                oficinaId: '$oficinaIdStr',
+                sosId: '${sosIdStr.isNotEmpty && sosIdStr != '0' ? sosIdStr : 'null'}'
+              });
+            } catch(e) {
+              console.error('❌ [Flutter] Erro ao salvar dados:', e);
+            }
+          })();
+        ''';
+        
+        // Executar JavaScript para salvar dados antes de navegar
+        controller.runJavaScript(preSaveJsCode);
+        
+        // Aguardar um pouco para garantir que o JS foi executado
+        await Future.delayed(const Duration(milliseconds: 200));
+        
+        // Armazenar dados também para salvar novamente quando a página carregar (backup)
+        _pendingNotificationData = dataToSave;
+        
+        // Construir URL do chat com parâmetros
+        String chatUrl = 'https://icarfront.vercel.app/chat?source=mobile';
+        if (oficinaId != null && oficinaId.toString().isNotEmpty) {
+          chatUrl += '&oficina_id=$oficinaId';
+        }
+        if (sosId != null && sosId.toString().isNotEmpty && sosId != '0') {
+          chatUrl += '&sos_id=$sosId';
+        }
+        
+        print('🔄 Navegando para: $chatUrl');
+        
+        // Navegar para o chat
+        controller.loadRequest(Uri.parse(chatUrl));
+      } else {
+        print('⚠️ Oficina ID não encontrado, navegando para chat genérico');
+        controller.loadRequest(Uri.parse('https://icarfront.vercel.app/chat?source=mobile'));
+      }
+    } else {
+      print('ℹ️ Notificação não é do tipo chat, ignorando navegação');
+    }
   }
 
   // Carregar email do SharedPreferences ao iniciar
@@ -3341,6 +3871,7 @@ class AuthService {
   static const _storage = FlutterSecureStorage();
   static const _tokenKey = 'auth_token';
   static const _userKey = 'user_data';
+  static const _rememberMeKey = 'remember_me';
   
   late Dio _dio;
 
@@ -3374,11 +3905,30 @@ class AuthService {
     return token != null && token.isNotEmpty;
   }
 
+  Future<bool> shouldRememberMe() async {
+    final rememberMe = await _storage.read(key: _rememberMeKey);
+    // Se não estiver definido, assumir false (não lembrar)
+    if (rememberMe == null) {
+      return false;
+    }
+    return rememberMe == 'true';
+  }
+
   Future<String?> getToken() async {
+    // Verificar se "lembrar de mim" está ativo antes de retornar o token
+    final shouldRemember = await shouldRememberMe();
+    if (!shouldRemember) {
+      return null;
+    }
     return await _storage.read(key: _tokenKey);
   }
 
   Future<Map<String, dynamic>?> getUser() async {
+    // Verificar se "lembrar de mim" está ativo antes de retornar os dados do usuário
+    final shouldRemember = await shouldRememberMe();
+    if (!shouldRemember) {
+      return null;
+    }
     final userJson = await _storage.read(key: _userKey);
     if (userJson != null) {
       return jsonDecode(userJson);
@@ -3386,14 +3936,29 @@ class AuthService {
     return null;
   }
 
-  Future<void> saveAuthData(String token, Map<String, dynamic> user) async {
-    await _storage.write(key: _tokenKey, value: token);
-    await _storage.write(key: _userKey, value: jsonEncode(user));
+  Future<void> saveAuthData(String token, Map<String, dynamic> user, {bool rememberMe = false}) async {
+    if (rememberMe) {
+      // Salvar dados apenas se "lembrar de mim" estiver ativo
+      await _storage.write(key: _tokenKey, value: token);
+      await _storage.write(key: _userKey, value: jsonEncode(user));
+      await _storage.write(key: _rememberMeKey, value: 'true');
+      print('✅ Credenciais salvas com "Lembrar de mim" ativado');
+    } else {
+      // Não salvar no FlutterSecureStorage se "lembrar de mim" não estiver ativo
+      // Mas limpar qualquer dado anterior
+      await _storage.delete(key: _tokenKey);
+      await _storage.delete(key: _userKey);
+      await _storage.write(key: _rememberMeKey, value: 'false');
+      print('ℹ️ Credenciais não salvas (Lembrar de mim desativado)');
+    }
   }
 
   Future<void> logout() async {
+    // Limpar todos os dados de autenticação
     await _storage.delete(key: _tokenKey);
     await _storage.delete(key: _userKey);
+    await _storage.delete(key: _rememberMeKey);
+    print('✅ Todos os dados de autenticação foram removidos');
   }
 
   Dio get httpClient => _dio;
