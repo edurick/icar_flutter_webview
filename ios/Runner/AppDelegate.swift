@@ -39,7 +39,14 @@ import UserNotifications
   // Registrar token APNS
   override func application(_ application: UIApplication,
     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+    print("📱 APNS token registrado com sucesso")
     Messaging.messaging().apnsToken = deviceToken
+  }
+  
+  // Tratar erro ao registrar notificações remotas
+  override func application(_ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error) {
+    print("❌ Erro ao registrar notificações remotas: \(error.localizedDescription)")
   }
 }
 
@@ -54,5 +61,43 @@ extension AppDelegate: MessagingDelegate {
       object: nil,
       userInfo: dataDict
     )
+  }
+}
+
+// Extensão para UNUserNotificationCenterDelegate
+// Necessário para que as notificações funcionem corretamente no iOS
+extension AppDelegate: UNUserNotificationCenterDelegate {
+  // Método chamado quando uma notificação é recebida enquanto o app está em foreground
+  @available(iOS 10.0, *)
+  func userNotificationCenter(_ center: UNUserNotificationCenter,
+                              willPresent notification: UNNotification,
+                              withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    let userInfo = notification.request.content.userInfo
+    
+    print("📱 Notificação recebida em foreground: \(userInfo)")
+    
+    // Exibir a notificação mesmo quando o app está em foreground
+    // Isso permite que o usuário veja a notificação enquanto usa o app
+    if #available(iOS 14.0, *) {
+      completionHandler([.banner, .badge, .sound, .list])
+    } else {
+      completionHandler([.alert, .badge, .sound])
+    }
+  }
+  
+  // Método chamado quando o usuário toca em uma notificação
+  @available(iOS 10.0, *)
+  func userNotificationCenter(_ center: UNUserNotificationCenter,
+                              didReceive response: UNNotificationResponse,
+                              withCompletionHandler completionHandler: @escaping () -> Void) {
+    let userInfo = response.notification.request.content.userInfo
+    
+    print("📱 Usuário tocou na notificação: \(userInfo)")
+    
+    // Processar a notificação tocada
+    // O Flutter receberá isso através do FirebaseMessaging.onMessageOpenedApp
+    Messaging.messaging().appDidReceiveMessage(userInfo)
+    
+    completionHandler()
   }
 }

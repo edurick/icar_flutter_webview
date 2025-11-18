@@ -68,6 +68,10 @@
 	<string>O iCar precisa acessar sua biblioteca de fotos para permitir que você selecione imagens de veículos para anúncios, envie fotos de documentos e compartilhe imagens com vendedores. Por exemplo, ao criar um anúncio, você poderá escolher fotos existentes do seu veículo.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
