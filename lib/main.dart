@@ -249,12 +249,10 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
       builder: (context, child) {
-        // Limitar o escalonamento de fontes no Android para evitar fontes muito grandes
-        // No iOS, manter o comportamento padrão
+        // Desabilitar escalonamento de fontes do sistema operacional
+        // Fixar em 1.0 para Android e iOS para evitar textos muito grandes
         final mediaQuery = MediaQuery.of(context);
-        final textScaleFactor = Platform.isAndroid
-            ? mediaQuery.textScaleFactor.clamp(0.8, 1.0) // Limitar entre 0.8 e 1.0 no Android
-            : mediaQuery.textScaleFactor; // Manter comportamento padrão no iOS
+        final textScaleFactor = 1.0; // Fixar em 1.0 para ambos Android e iOS
 
         return MediaQuery(
           data: mediaQuery.copyWith(textScaleFactor: textScaleFactor),
@@ -399,6 +397,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               _isLoading = false;
             });
             _disablePageZoom();
+            _disableFontScaling();
             _injectJavaScriptChannels();
             _startLocationMonitoring();
             _startAuthMonitoring();
@@ -474,6 +473,17 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           },
           onNavigationRequest: (NavigationRequest request) {
             print('Navigation to: ${request.url}');
+
+            // Interceptar URLs externas (Google Maps, intent://, etc.) e abrir com url_launcher
+            if (request.url.startsWith('intent://') ||
+                request.url.startsWith('maps.google.com') ||
+                request.url.startsWith('https://maps.google.com') ||
+                request.url.startsWith('https://www.google.com/maps') ||
+                request.url.contains('mapclient=embed')) {
+              print('🗺️ Interceptando navegação para URL externa: ${request.url}');
+              _launchExternalUrl(request.url);
+              return NavigationDecision.prevent;
+            }
 
             // Se navegando para o backend do Apple Sign In, não bloquear
             if (request.url.contains('icar.skalacode.com/auth/apple') ||
@@ -617,6 +627,46 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _launchExternalUrl(String url) async {
+    try {
+      print('🚀 Tentando abrir URL externa: $url');
+      
+      // Tratar URLs intent:// (Android)
+      if (url.startsWith('intent://')) {
+        // Extrair a URL de fallback do intent
+        final uri = Uri.parse(url);
+        final fallbackUrl = uri.queryParameters['S.browser_fallback_url'];
+        if (fallbackUrl != null) {
+          final decodedUrl = Uri.decodeComponent(fallbackUrl);
+          print('📱 Usando URL de fallback: $decodedUrl');
+          url = decodedUrl;
+        } else {
+          // Tentar extrair URL do intent de outra forma
+          final match = RegExp(r'https?://[^\s;]+').firstMatch(url);
+          if (match != null) {
+            url = match.group(0)!;
+            print('📱 Extraída URL do intent: $url');
+          }
+        }
+      }
+      
+      final uri = Uri.parse(url);
+      
+      // Verificar se a URL pode ser aberta
+      if (await url_launcher.canLaunchUrl(uri)) {
+        await url_launcher.launchUrl(
+          uri,
+          mode: url_launcher.LaunchMode.externalApplication,
+        );
+        print('✅ URL externa aberta com sucesso');
+      } else {
+        print('❌ Não foi possível abrir a URL: $url');
+      }
+    } catch (e) {
+      print('❌ Erro ao abrir URL externa: $e');
+    }
+  }
+
   Future<void> _handleDeepLink(String link) async {
     print('🔗 DEEP LINK RECEIVED: $link');
 
@@ -703,6 +753,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         localStorage.setItem('auth_token', '$token');
         localStorage.setItem('authToken', '$token');
         localStorage.setItem('user', '$userJson');
+        localStorage.setItem('user_data', '$userJson');
         localStorage.setItem('rememberMe', '$rememberMe');
         $emailJsCode
 
@@ -711,6 +762,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         sessionStorage.setItem('auth_token', '$token');
         sessionStorage.setItem('authToken', '$token');
         sessionStorage.setItem('token', '$token');
+        sessionStorage.setItem('user_data', '$userJson');
 
         console.log('Flutter: Token do $provider Auth salvo no localStorage (rememberMe: $rememberMe)');
 
@@ -793,6 +845,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           localStorage.setItem('auth_token', '$token');
           localStorage.setItem('authToken', '$token');
           localStorage.setItem('user', '${jsonEncode(user)}');
+          localStorage.setItem('user_data', '${jsonEncode(user)}');
           localStorage.setItem('nameUser', '$userName');
           localStorage.setItem('userName', '$userName');
           localStorage.setItem('idUser', '$userId');
@@ -805,6 +858,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           sessionStorage.setItem('auth_token', '$token');
           sessionStorage.setItem('authToken', '$token');
           sessionStorage.setItem('token', '$token');
+          sessionStorage.setItem('user_data', '${jsonEncode(user)}');
           sessionStorage.setItem('nameUser', '$userName');
           sessionStorage.setItem('userName', '$userName');
           sessionStorage.setItem('idUser', '$userId');
@@ -1102,13 +1156,24 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
       final jsCode = '''
         (function() {
-          const request = localStorage.getItem('flutter_location_request');
-          if (request) {
-            // Remover imediatamente para evitar processamento duplicado
-            localStorage.removeItem('flutter_location_request');
-            return request;
+          try {
+            // Verificar se estamos em uma página de erro
+            if (window.location.protocol === 'chrome-error:' || 
+                window.location.href.startsWith('chrome-error://') ||
+                typeof localStorage === 'undefined' || localStorage === null) {
+              return null;
+            }
+            
+            const request = localStorage.getItem('flutter_location_request');
+            if (request) {
+              // Remover imediatamente para evitar processamento duplicado
+              localStorage.removeItem('flutter_location_request');
+              return request;
+            }
+            return null;
+          } catch(e) {
+            return null;
           }
-          return null;
         })();
       ''';
 
@@ -1389,11 +1454,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       print('🔍 Obtendo localização atual...');
 
       final Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 20),
+        desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 30),
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10,
+          accuracy: LocationAccuracy.best,
+          distanceFilter: 0,
         ),
       );
 
@@ -1401,6 +1466,17 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       print('   Latitude: ${position.latitude}');
       print('   Longitude: ${position.longitude}');
       print('   Precisão: ${position.accuracy}m');
+
+      // Validar precisão da localização (deve ser < 10 metros para ser considerada precisa)
+      const double maxAcceptableAccuracy = 10.0; // metros
+      if (position.accuracy > maxAcceptableAccuracy) {
+        print('⚠️ Precisão da localização (${position.accuracy}m) está acima do esperado (${maxAcceptableAccuracy}m)');
+        // Ainda assim, enviar a localização, mas com aviso
+        // Em alguns casos, mesmo com precisão menor, a localização pode ser útil
+        // O usuário pode verificar se o endereço está correto
+      } else {
+        print('✅ Precisão da localização está dentro do esperado (${position.accuracy}m <= ${maxAcceptableAccuracy}m)');
+      }
 
       // Não mostrar mensagem de sucesso no iOS para evitar spam (o React já mostra feedback)
       // Apenas mostrar no Android se necessário
@@ -1887,6 +1963,83 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     controller.runJavaScript(js);
   }
 
+  void _disableFontScaling() {
+    const js = '''
+      (function() {
+        try {
+          // Criar ou atualizar estilo CSS para desabilitar font scaling
+          var styleId = 'flutter-disable-font-scaling';
+          var existingStyle = document.getElementById(styleId);
+          
+          if (existingStyle) {
+            existingStyle.remove();
+          }
+          
+          var style = document.createElement('style');
+          style.id = styleId;
+          style.textContent = `
+            * {
+              -webkit-text-size-adjust: 100% !important;
+              text-size-adjust: 100% !important;
+              -moz-text-size-adjust: 100% !important;
+            }
+            html {
+              -webkit-text-size-adjust: 100% !important;
+              text-size-adjust: 100% !important;
+              -moz-text-size-adjust: 100% !important;
+            }
+            body {
+              -webkit-text-size-adjust: 100% !important;
+              text-size-adjust: 100% !important;
+              -moz-text-size-adjust: 100% !important;
+            }
+          `;
+          
+          var head = document.head || document.getElementsByTagName('head')[0];
+          if (head) {
+            head.appendChild(style);
+          }
+          
+          // Aplicar diretamente nos elementos principais também
+          if (document.documentElement) {
+            document.documentElement.style.setProperty('-webkit-text-size-adjust', '100%', 'important');
+            document.documentElement.style.setProperty('text-size-adjust', '100%', 'important');
+            document.documentElement.style.setProperty('-moz-text-size-adjust', '100%', 'important');
+          }
+          
+          if (document.body) {
+            document.body.style.setProperty('-webkit-text-size-adjust', '100%', 'important');
+            document.body.style.setProperty('text-size-adjust', '100%', 'important');
+            document.body.style.setProperty('-moz-text-size-adjust', '100%', 'important');
+          }
+          
+          // Observar mudanças no DOM para aplicar em elementos dinâmicos
+          if (window.MutationObserver) {
+            var observer = new MutationObserver(function(mutations) {
+              mutations.forEach(function(mutation) {
+                mutation.addedNodes.forEach(function(node) {
+                  if (node.nodeType === 1) { // Element node
+                    node.style.setProperty('-webkit-text-size-adjust', '100%', 'important');
+                    node.style.setProperty('text-size-adjust', '100%', 'important');
+                    node.style.setProperty('-moz-text-size-adjust', '100%', 'important');
+                  }
+                });
+              });
+            });
+            
+            observer.observe(document.body || document.documentElement, {
+              childList: true,
+              subtree: true
+            });
+          }
+        } catch (e) {
+          console.log('Flutter: erro ao desabilitar font scaling', e);
+        }
+      })();
+    ''';
+    controller.runJavaScript(js);
+  }
+
 
   // Monitorar localStorage da WebView e printar valores
   void _startLocalStorageMonitoring() {
@@ -1900,6 +2053,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         final jsCode = '''
           (function() {
             try {
+              // Verificar se estamos em uma página de erro (chrome-error://)
+              if (window.location.protocol === 'chrome-error:' || 
+                  window.location.href.startsWith('chrome-error://') ||
+                  window.location.href.startsWith('about:blank')) {
+                return JSON.stringify({error: 'Página de erro - localStorage não disponível'});
+              }
+              
+              // Verificar se localStorage está disponível
+              if (typeof localStorage === 'undefined' || localStorage === null) {
+                return JSON.stringify({error: 'localStorage não disponível'});
+              }
+              
               const allItems = {};
               // Ler todas as chaves do localStorage
               for (let i = 0; i < localStorage.length; i++) {
@@ -1959,6 +2124,16 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         
         try {
           final Map<String, dynamic> localStorageData = jsonDecode(resultStr);
+          
+          // Verificar se há erro (página de erro, localStorage não disponível, etc.)
+          if (localStorageData.containsKey('error')) {
+            final errorMsg = localStorageData['error'].toString();
+            // Só logar erro a cada 6 ciclos para não poluir os logs
+            if (timer.tick % 6 == 0) {
+              print('⚠️ [Ciclo ${timer.tick}] Erro ao acessar localStorage: $errorMsg');
+            }
+            return; // Parar processamento neste ciclo
+          }
           
           // Só imprimir se houver mudanças ou a cada 6 ciclos (30 segundos)
           if (timer.tick % 6 == 0 || localStorageData.isNotEmpty) {
@@ -2929,8 +3104,16 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         
         final jsCode = '''
           (function() {
-            // Tentar obter email de várias fontes possíveis no localStorage E sessionStorage
-            const email = localStorage.getItem('userEmail') || 
+            try {
+              // Verificar se estamos em uma página de erro
+              if (window.location.protocol === 'chrome-error:' || 
+                  window.location.href.startsWith('chrome-error://') ||
+                  typeof localStorage === 'undefined' || localStorage === null) {
+                return JSON.stringify({error: 'Página de erro - storage não disponível'});
+              }
+              
+              // Tentar obter email de várias fontes possíveis no localStorage E sessionStorage
+              const email = localStorage.getItem('userEmail') || 
                          sessionStorage.getItem('userEmail') ||
                          localStorage.getItem('user_email') || 
                          sessionStorage.getItem('user_email') ||
@@ -3015,7 +3198,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               sessionStorageSize: allSessionKeys.length,
               timestamp: new Date().toISOString()
             });
-          })();
+          } catch(e) {
+            return JSON.stringify({error: e.toString()});
+          }
+        })();
         ''';
 
         debugLogger.addLog('🔍 [Ciclo ${timer.tick}] Executando JavaScript para ler localStorage...', level: LogLevel.debug);
@@ -3052,6 +3238,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         Map<String, dynamic>? data;
         try {
           data = jsonDecode(resultStr);
+          
+          // Verificar se há erro (página de erro, storage não disponível, etc.)
+          if (data != null && data.containsKey('error')) {
+            final errorMsg = data['error'].toString();
+            // Só logar erro a cada 6 ciclos para não poluir os logs
+            if (timer.tick % 6 == 0) {
+              debugLogger.addLog('⚠️ [Ciclo ${timer.tick}] Erro ao acessar storage: $errorMsg', level: LogLevel.warning);
+              print('⚠️ [Ciclo ${timer.tick}] Erro ao acessar storage: $errorMsg');
+            }
+            return; // Parar processamento neste ciclo
+          }
+          
           debugLogger.addLog('✅ [Ciclo ${timer.tick}] JSON parseado com sucesso', level: LogLevel.debug);
         } catch (e) {
           // Log mais detalhado do erro

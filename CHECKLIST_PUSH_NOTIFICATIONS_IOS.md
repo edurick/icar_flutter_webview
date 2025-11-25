@@ -151,3 +151,14 @@ Verifique os logs do Xcode:
 - ⚠️ Verificar configurações no Firebase Console
 - ⚠️ Testar em dispositivo físico
 
+
+
+
+
+
+
+
+
+
+
+

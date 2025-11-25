@@ -105,3 +105,14 @@ Após configurar:
 - Confirme que a APN Key está configurada no Firebase Console
 - Verifique se o app tem permissão para notificações nas configurações do iOS
 
+
+
+
+
+
+
+
+
+
+
+
