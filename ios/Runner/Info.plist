@@ -51,6 +51,8 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>O iCar precisa acessar a câmera para permitir que você tire fotos de veículos para anúncios, capture imagens de documentos para verificação e grave vídeos demonstrativos. Por exemplo, ao criar um anúncio de venda, você poderá fotografar seu veículo diretamente pelo app.</string>

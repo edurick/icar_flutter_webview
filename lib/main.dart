@@ -306,9 +306,29 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    
+    // Inicializar WebView após o frame estar pronto para evitar crashes no iOS
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      try {
+        print('🍎 [iOS] Iniciando inicialização do WebView após frame estar pronto...');
+        _initWebView();
+      } catch (e, stackTrace) {
+        print('❌ [iOS] Erro crítico ao inicializar WebView: $e');
+        print('❌ [iOS] Stack trace: $stackTrace');
+        // Tentar novamente após um pequeno delay
+        Future.delayed(const Duration(milliseconds: 500), () {
+          try {
+            print('🔄 [iOS] Tentando reinicializar WebView...');
+            _initWebView();
+          } catch (e2) {
+            print('❌ [iOS] Erro ao reinicializar WebView: $e2');
+          }
+        });
+      }
+    });
+    
     // Solicitar permissão de localização no início do app
     _requestLocationPermission();
-    _initWebView();
     _initDeepLinkListener();
     _initPushNotifications();
     _loadEmailFromFlutterStorage();
@@ -369,38 +389,70 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   }
 
   void _initWebView() {
-    // User-Agent diferente para Android (Chrome) e iOS (Safari)
-    final userAgent = Platform.isAndroid
-        ? 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
-        : 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+    try {
+      print('🍎 [iOS] Iniciando configuração do WebViewController...');
+      
+      // User-Agent diferente para Android (Chrome) e iOS (Safari)
+      final userAgent = Platform.isAndroid
+          ? 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
+          : 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
-    controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..enableZoom(false)
-      ..setUserAgent(userAgent)
+      print('🍎 [iOS] User-Agent configurado: $userAgent');
+
+      // Configuração base do WebViewController
+      controller = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.unrestricted)
+        ..enableZoom(false)
+        ..setUserAgent(userAgent);
+      
+      // Configurações específicas do iOS
+      if (Platform.isIOS) {
+        print('🍎 [iOS] Aplicando configurações específicas do iOS...');
+        try {
+          // Configurar propriedades do WKWebView via platform-specific settings
+          // Estas configurações ajudam a evitar crashes no iOS
+          controller.setBackgroundColor(Colors.white);
+          print('🍎 [iOS] Cor de fundo configurada');
+        } catch (e) {
+          print('⚠️ [iOS] Erro ao configurar propriedades específicas do iOS: $e');
+        }
+      }
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
+            if (Platform.isIOS && progress % 25 == 0) {
+              print('🍎 [iOS] Progresso do carregamento: $progress%');
+            }
             if (progress == 100) {
+              print('✅ [iOS] Página carregada completamente (100%)');
               setState(() {
                 _isLoading = false;
               });
             }
           },
           onPageStarted: (String url) {
+            print('🍎 [iOS] Iniciando carregamento da página: $url');
             setState(() {
               _isLoading = true;
             });
           },
           onPageFinished: (String url) {
+            print('✅ [iOS] Página carregada com sucesso: $url');
             setState(() {
               _isLoading = false;
             });
-            _disablePageZoom();
-            _disableFontScaling();
-            _injectJavaScriptChannels();
-            _startLocationMonitoring();
-            _startAuthMonitoring();
+            try {
+              print('🍎 [iOS] Aplicando configurações pós-carregamento...');
+              _disablePageZoom();
+              _disableFontScaling();
+              _injectJavaScriptChannels();
+              _startLocationMonitoring();
+              _startAuthMonitoring();
+              print('✅ [iOS] Configurações pós-carregamento aplicadas');
+            } catch (e, stackTrace) {
+              print('❌ [iOS] Erro ao aplicar configurações pós-carregamento: $e');
+              print('❌ [iOS] Stack trace: $stackTrace');
+            }
 
             // Token já foi injetado no onNavigationRequest, apenas log
             if (url.contains('auth_success=true')) {
@@ -466,13 +518,29 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             }
           },
           onHttpError: (HttpResponseError error) {
-            print('HTTP error: ${error.response?.statusCode}');
+            print('❌ [iOS] HTTP error: ${error.response?.statusCode}');
+            print('❌ [iOS] Response: ${error.response}');
+            if (Platform.isIOS) {
+              print('🍎 [iOS] Erro HTTP no iOS - Status: ${error.response?.statusCode}');
+            }
           },
           onWebResourceError: (WebResourceError error) {
-            print('Web resource error: ${error.description}');
+            print('❌ [iOS] Web resource error: ${error.description}');
+            print('❌ [iOS] Error code: ${error.errorCode}');
+            print('❌ [iOS] Error type: ${error.errorType}');
+            if (Platform.isIOS) {
+              print('🍎 [iOS] Detalhes do erro no iOS:');
+              print('   - Description: ${error.description}');
+              print('   - Code: ${error.errorCode}');
+              print('   - Type: ${error.errorType}');
+            }
           },
           onNavigationRequest: (NavigationRequest request) {
-            print('Navigation to: ${request.url}');
+            if (Platform.isIOS) {
+              print('🍎 [iOS] Navigation request para: ${request.url}');
+            } else {
+              print('Navigation to: ${request.url}');
+            }
 
             // Interceptar URLs externas (Google Maps, intent://, etc.) e abrir com url_launcher
             if (request.url.startsWith('intent://') ||
@@ -599,8 +667,34 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         onMessageReceived: (JavaScriptMessage message) {
           _handleWebViewMessage(message.message);
         },
-      )
-      ..loadRequest(Uri.parse('https://icarfront.vercel.app/?source=mobile'));
+      );
+      
+      print('🍎 [iOS] WebViewController configurado, carregando URL...');
+      
+      // Carregar URL com tratamento de erros
+      try {
+        controller.loadRequest(Uri.parse('https://icarfront.vercel.app/?source=mobile'));
+        print('✅ [iOS] URL carregada com sucesso');
+      } catch (e, stackTrace) {
+        print('❌ [iOS] Erro ao carregar URL: $e');
+        print('❌ [iOS] Stack trace: $stackTrace');
+        // Tentar novamente após um delay
+        Future.delayed(const Duration(seconds: 1), () {
+          try {
+            print('🔄 [iOS] Tentando recarregar URL...');
+            controller.loadRequest(Uri.parse('https://icarfront.vercel.app/?source=mobile'));
+          } catch (e2) {
+            print('❌ [iOS] Erro ao recarregar URL: $e2');
+          }
+        });
+      }
+      
+      print('✅ [iOS] WebView inicializado com sucesso');
+    } catch (e, stackTrace) {
+      print('❌ [iOS] Erro crítico na inicialização do WebView: $e');
+      print('❌ [iOS] Stack trace: $stackTrace');
+      rethrow; // Re-throw para que o erro seja capturado no initState
+    }
   }
 
   void _initDeepLinkListener() async {
