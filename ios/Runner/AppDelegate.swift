@@ -60,7 +60,7 @@ import UserNotifications
     manualOptions.apiKey = "AIzaSyDgH9dJMTcWGYGxl6Rs0CXPxnlADumLFO4"
     manualOptions.projectID = "icar-2d12c"
     manualOptions.storageBucket = "icar-2d12c.firebasestorage.app"
-    manualOptions.bundleID = Bundle.main.bundleIdentifier
+    manualOptions.bundleID = Bundle.main.bundleIdentifier ?? "com.mycompany.icarusers"
     
     FirebaseApp.configure(options: manualOptions)
     print("✅ Firebase configurado manualmente com opções do projeto icar-2d12c")
