@@ -403,21 +403,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       controller = WebViewController()
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..enableZoom(false)
-        ..setUserAgent(userAgent);
-      
-      // Configurações específicas do iOS
-      if (Platform.isIOS) {
-        print('🍎 [iOS] Aplicando configurações específicas do iOS...');
-        try {
-          // Configurar propriedades do WKWebView via platform-specific settings
-          // Estas configurações ajudam a evitar crashes no iOS
-          controller.setBackgroundColor(Colors.white);
-          print('🍎 [iOS] Cor de fundo configurada');
-        } catch (e) {
-          print('⚠️ [iOS] Erro ao configurar propriedades específicas do iOS: $e');
-        }
-      }
-      ..setNavigationDelegate(
+        ..setUserAgent(userAgent)
+        ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (int progress) {
             if (Platform.isIOS && progress % 25 == 0) {
@@ -668,6 +655,19 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           _handleWebViewMessage(message.message);
         },
       );
+      
+      // Configurações específicas do iOS
+      if (Platform.isIOS) {
+        print('🍎 [iOS] Aplicando configurações específicas do iOS...');
+        try {
+          // Configurar propriedades do WKWebView via platform-specific settings
+          // Estas configurações ajudam a evitar crashes no iOS
+          controller.setBackgroundColor(Colors.white);
+          print('🍎 [iOS] Cor de fundo configurada');
+        } catch (e) {
+          print('⚠️ [iOS] Erro ao configurar propriedades específicas do iOS: $e');
+        }
+      }
       
       print('🍎 [iOS] WebViewController configurado, carregando URL...');
       

@@ -3,6 +3,8 @@ platform :ios, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+# Desabilitar cópia de atributos estendidos que causam problemas no codesign
+ENV['COPYFILE_DISABLE'] = '1'
 
 project 'Runner', {
   'Debug' => :debug,

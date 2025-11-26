@@ -66,10 +66,12 @@ extension AppDelegate: MessagingDelegate {
 
 // Extensão para UNUserNotificationCenterDelegate
 // Necessário para que as notificações funcionem corretamente no iOS
-extension AppDelegate: UNUserNotificationCenterDelegate {
+// Nota: FlutterAppDelegate já implementa UNUserNotificationCenterDelegate,
+// então estamos apenas sobrescrevendo os métodos
+extension AppDelegate {
   // Método chamado quando uma notificação é recebida enquanto o app está em foreground
   @available(iOS 10.0, *)
-  func userNotificationCenter(_ center: UNUserNotificationCenter,
+  override func userNotificationCenter(_ center: UNUserNotificationCenter,
                               willPresent notification: UNNotification,
                               withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
     let userInfo = notification.request.content.userInfo
@@ -87,7 +89,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
   
   // Método chamado quando o usuário toca em uma notificação
   @available(iOS 10.0, *)
-  func userNotificationCenter(_ center: UNUserNotificationCenter,
+  override func userNotificationCenter(_ center: UNUserNotificationCenter,
                               didReceive response: UNNotificationResponse,
                               withCompletionHandler completionHandler: @escaping () -> Void) {
     let userInfo = response.notification.request.content.userInfo

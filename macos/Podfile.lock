@@ -1,6 +1,6 @@
 PODS:
   - app_links (6.4.1):
-    - Flutter
+    - FlutterMacOS
   - AppAuth (1.7.6):
     - AppAuth/Core (= 1.7.6)
     - AppAuth/ExternalUserAgent (= 1.7.6)
@@ -20,16 +20,18 @@ PODS:
     - Firebase/CoreOnly
     - FirebaseMessaging (~> 11.15.0)
   - firebase_auth (5.7.0):
-    - Firebase/Auth (= 11.15.0)
+    - Firebase/Auth (~> 11.15.0)
+    - Firebase/CoreOnly (~> 11.15.0)
     - firebase_core
-    - Flutter
+    - FlutterMacOS
   - firebase_core (3.15.2):
-    - Firebase/CoreOnly (= 11.15.0)
-    - Flutter
+    - Firebase/CoreOnly (~> 11.15.0)
+    - FlutterMacOS
   - firebase_messaging (15.2.10):
-    - Firebase/Messaging (= 11.15.0)
+    - Firebase/CoreOnly (~> 11.15.0)
+    - Firebase/Messaging (~> 11.15.0)
     - firebase_core
-    - Flutter
+    - FlutterMacOS
   - FirebaseAppCheckInterop (11.15.0)
   - FirebaseAuth (11.15.0):
     - FirebaseAppCheckInterop (~> 11.0)
@@ -63,13 +65,11 @@ PODS:
     - GoogleUtilities/Reachability (~> 8.1)
     - GoogleUtilities/UserDefaults (~> 8.1)
     - nanopb (~> 3.30910.0)
-  - Flutter (1.0.0)
-  - flutter_custom_tabs_ios (2.4.0):
-    - Flutter
   - flutter_local_notifications (0.0.1):
-    - Flutter
-  - flutter_secure_storage (6.0.0):
-    - Flutter
+    - FlutterMacOS
+  - flutter_secure_storage_macos (6.1.3):
+    - FlutterMacOS
+  - FlutterMacOS (1.0.0)
   - geolocator_apple (1.2.0):
     - Flutter
     - FlutterMacOS
@@ -127,38 +127,33 @@ PODS:
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
-  - permission_handler_apple (9.3.0):
-    - Flutter
   - PromisesObjC (2.4.0)
-  - RecaptchaInterop (101.0.0)
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
   - sign_in_with_apple (0.0.1):
-    - Flutter
-  - url_launcher_ios (0.0.1):
-    - Flutter
+    - FlutterMacOS
+  - url_launcher_macos (0.0.1):
+    - FlutterMacOS
   - webview_flutter_wkwebview (0.0.1):
     - Flutter
     - FlutterMacOS
 
 DEPENDENCIES:
-  - app_links (from `.symlinks/plugins/app_links/ios`)
-  - firebase_auth (from `.symlinks/plugins/firebase_auth/ios`)
-  - firebase_core (from `.symlinks/plugins/firebase_core/ios`)
-  - firebase_messaging (from `.symlinks/plugins/firebase_messaging/ios`)
-  - Flutter (from `Flutter`)
-  - flutter_custom_tabs_ios (from `.symlinks/plugins/flutter_custom_tabs_ios/ios`)
-  - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
-  - flutter_secure_storage (from `.symlinks/plugins/flutter_secure_storage/ios`)
-  - geolocator_apple (from `.symlinks/plugins/geolocator_apple/darwin`)
-  - google_sign_in_ios (from `.symlinks/plugins/google_sign_in_ios/darwin`)
-  - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
-  - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
-  - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
-  - sign_in_with_apple (from `.symlinks/plugins/sign_in_with_apple/ios`)
-  - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
-  - webview_flutter_wkwebview (from `.symlinks/plugins/webview_flutter_wkwebview/darwin`)
+  - app_links (from `Flutter/ephemeral/.symlinks/plugins/app_links/macos`)
+  - firebase_auth (from `Flutter/ephemeral/.symlinks/plugins/firebase_auth/macos`)
+  - firebase_core (from `Flutter/ephemeral/.symlinks/plugins/firebase_core/macos`)
+  - firebase_messaging (from `Flutter/ephemeral/.symlinks/plugins/firebase_messaging/macos`)
+  - flutter_local_notifications (from `Flutter/ephemeral/.symlinks/plugins/flutter_local_notifications/macos`)
+  - flutter_secure_storage_macos (from `Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - geolocator_apple (from `Flutter/ephemeral/.symlinks/plugins/geolocator_apple/darwin`)
+  - google_sign_in_ios (from `Flutter/ephemeral/.symlinks/plugins/google_sign_in_ios/darwin`)
+  - path_provider_foundation (from `Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin`)
+  - shared_preferences_foundation (from `Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin`)
+  - sign_in_with_apple (from `Flutter/ephemeral/.symlinks/plugins/sign_in_with_apple/macos`)
+  - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
+  - webview_flutter_wkwebview (from `Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin`)
 
 SPEC REPOS:
   trunk:
@@ -180,50 +175,45 @@ SPEC REPOS:
     - GTMSessionFetcher
     - nanopb
     - PromisesObjC
-    - RecaptchaInterop
 
 EXTERNAL SOURCES:
   app_links:
-    :path: ".symlinks/plugins/app_links/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/app_links/macos
   firebase_auth:
-    :path: ".symlinks/plugins/firebase_auth/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/firebase_auth/macos
   firebase_core:
-    :path: ".symlinks/plugins/firebase_core/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/firebase_core/macos
   firebase_messaging:
-    :path: ".symlinks/plugins/firebase_messaging/ios"
-  Flutter:
-    :path: Flutter
-  flutter_custom_tabs_ios:
-    :path: ".symlinks/plugins/flutter_custom_tabs_ios/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/firebase_messaging/macos
   flutter_local_notifications:
-    :path: ".symlinks/plugins/flutter_local_notifications/ios"
-  flutter_secure_storage:
-    :path: ".symlinks/plugins/flutter_secure_storage/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_local_notifications/macos
+  flutter_secure_storage_macos:
+    :path: Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos
+  FlutterMacOS:
+    :path: Flutter/ephemeral
   geolocator_apple:
-    :path: ".symlinks/plugins/geolocator_apple/darwin"
+    :path: Flutter/ephemeral/.symlinks/plugins/geolocator_apple/darwin
   google_sign_in_ios:
-    :path: ".symlinks/plugins/google_sign_in_ios/darwin"
+    :path: Flutter/ephemeral/.symlinks/plugins/google_sign_in_ios/darwin
   path_provider_foundation:
-    :path: ".symlinks/plugins/path_provider_foundation/darwin"
-  permission_handler_apple:
-    :path: ".symlinks/plugins/permission_handler_apple/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin
   shared_preferences_foundation:
-    :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
+    :path: Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin
   sign_in_with_apple:
-    :path: ".symlinks/plugins/sign_in_with_apple/ios"
-  url_launcher_ios:
-    :path: ".symlinks/plugins/url_launcher_ios/ios"
+    :path: Flutter/ephemeral/.symlinks/plugins/sign_in_with_apple/macos
+  url_launcher_macos:
+    :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
   webview_flutter_wkwebview:
-    :path: ".symlinks/plugins/webview_flutter_wkwebview/darwin"
+    :path: Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin
 
 SPEC CHECKSUMS:
-  app_links: 3dbc685f76b1693c66a6d9dd1e9ab6f73d97dc0a
+  app_links: 05a6ec2341985eb05e9f97dc63f5837c39895c3f
   AppAuth: d4f13a8fe0baf391b2108511793e4b479691fb73
   AppCheckCore: cc8fd0a3a230ddd401f326489c99990b013f0c4f
   Firebase: d99ac19b909cd2c548339c2241ecd0d1599ab02e
-  firebase_auth: 50af8366c87bb88c80ebeae62eb60189c7246b9b
-  firebase_core: 995454a784ff288be5689b796deb9e9fa3601818
-  firebase_messaging: f4a41dd102ac18b840eba3f39d67e77922d3f707
+  firebase_auth: 693f1e1ef2bb11a241d4478e63f1f47676af0538
+  firebase_core: 7667f880631ae8ad10e3d6567ab7582fe0682326
+  firebase_messaging: df39858bcbbcce792c9e4f1ca51b41123d6181fd
   FirebaseAppCheckInterop: 06fe5a3799278ae4667e6c432edd86b1030fa3df
   FirebaseAuth: a6575e5fbf46b046c58dc211a28a5fbdd8d4c83b
   FirebaseAuthInterop: 7087d7a4ee4bc4de019b2d0c240974ed5d89e2fd
@@ -232,10 +222,9 @@ SPEC CHECKSUMS:
   FirebaseCoreInternal: 9afa45b1159304c963da48addb78275ef701c6b4
   FirebaseInstallations: 317270fec08a5d418fdbc8429282238cab3ac843
   FirebaseMessaging: 3b26e2cee503815e01c3701236b020aa9b576f09
-  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_custom_tabs_ios: 87333f36c33a5971502766aca2f6ff4823b09bda
-  flutter_local_notifications: ad39620c743ea4c15127860f4b5641649a988100
-  flutter_secure_storage: 1ed9476fba7e7a782b22888f956cce43e2c62f13
+  flutter_local_notifications: 7e5a17a1dbc00d83dc10d43c2c4c05f2ceed233c
+  flutter_secure_storage_macos: 7f45e30f838cf2659862a4e4e3ee1c347c2b3b54
+  FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   geolocator_apple: ab36aa0e8b7d7a2d7639b3b4e48308394e8cef5e
   google_sign_in_ios: b48bb9af78576358a168361173155596c845f0b9
   GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
@@ -245,14 +234,12 @@ SPEC CHECKSUMS:
   GTMSessionFetcher: 5aea5ba6bd522a239e236100971f10cb71b96ab6
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
-  permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
-  RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
   shared_preferences_foundation: 7036424c3d8ec98dfe75ff1667cb0cd531ec82bb
-  sign_in_with_apple: c5dcc141574c8c54d5ac99dd2163c0c72ad22418
-  url_launcher_ios: 7a95fa5b60cc718a708b8f2966718e93db0cef1b
+  sign_in_with_apple: 6673c03c9e3643f6c8d33601943fbfa9ae99f94e
+  url_launcher_macos: f87a979182d112f911de6820aefddaf56ee9fbfd
   webview_flutter_wkwebview: 8ebf4fded22593026f7dbff1fbff31ea98573c8d
 
-PODFILE CHECKSUM: 62d09fd2a990124c2ee40e55ff80fd946d4cdd0a
+PODFILE CHECKSUM: 54d867c82ac51cbd61b565781b9fada492027009
 
 COCOAPODS: 1.16.2
