@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "663150745154",
-    "project_id": "icar-bd0c4",
-    "storage_bucket": "icar-bd0c4.firebasestorage.app"
+    "project_number": "832200775771",
+    "project_id": "icar-2d12c",
+    "storage_bucket": "icar-2d12c.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:663150745154:android:5027dbf5bfcb88fc787fdb",
+        "mobilesdk_app_id": "1:832200775771:android:583814bf4d5bec3315477e",
         "android_client_info": {
           "package_name": "com.mycompany.icarusers"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyBGgBZcU8fF49-CiQzkdBMMxlQIrqwAYgI"
+          "current_key": "AIzaSyAqrIaRifHOC0bbMksZg4DNU0b4kYJ488E"
         }
       ],
       "services": {
