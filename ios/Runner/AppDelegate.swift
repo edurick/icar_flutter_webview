@@ -10,8 +10,8 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // Configurar Firebase
-    FirebaseApp.configure()
+    // Configurar Firebase (com fallback quando o GoogleService-Info.plist não estiver embutido)
+    configureFirebaseApp()
     
     // Configurar Firebase Messaging
     if #available(iOS 10.0, *) {
@@ -34,6 +34,36 @@ import UserNotifications
     
     GeneratedPluginRegistrant.register(with: self)
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  /// Garante que o Firebase esteja configurado antes de acessar Messaging/Analytics.
+  /// Sem esse fallback o app crasha ao iniciar no iOS sempre que o GoogleService-Info.plist não é encontrado pelo runtime nativo.
+  private func configureFirebaseApp() {
+    if FirebaseApp.app() != nil {
+      print("✅ Firebase já configurado (camada Flutter) - pulando configure() nativo")
+      return
+    }
+    
+    if let filePath = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
+       let options = FirebaseOptions(contentsOfFile: filePath) {
+      FirebaseApp.configure(options: options)
+      print("✅ Firebase configurado via GoogleService-Info.plist")
+      return
+    }
+    
+    print("⚠️ GoogleService-Info.plist não encontrado. Aplicando configuração manual para evitar crash no iOS")
+    
+    let manualOptions = FirebaseOptions(
+      googleAppID: "1:832200775771:ios:1b8ff48f5118379515477e",
+      gcmSenderID: "832200775771"
+    )
+    manualOptions.apiKey = "AIzaSyDgH9dJMTcWGYGxl6Rs0CXPxnlADumLFO4"
+    manualOptions.projectID = "icar-2d12c"
+    manualOptions.storageBucket = "icar-2d12c.firebasestorage.app"
+    manualOptions.bundleID = Bundle.main.bundleIdentifier
+    
+    FirebaseApp.configure(options: manualOptions)
+    print("✅ Firebase configurado manualmente com opções do projeto icar-2d12c")
   }
   
   // Registrar token APNS
