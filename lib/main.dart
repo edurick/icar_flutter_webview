@@ -2724,6 +2724,35 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   // Inicializar push notifications
   Future<void> _initPushNotifications() async {
     try {
+      // Logs iOS específicos
+      if (Platform.isIOS) {
+        print('🍎 [iOS] ========== INICIANDO CONFIGURAÇÃO DE PUSH NOTIFICATIONS ==========');
+        print('🍎 [iOS] Verificando se APNS token foi registrado...');
+        
+        // Aguardar um pouco para dar tempo do AppDelegate registrar o token APNS
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // Verificar se o token FCM já está disponível (indica que APNS foi registrado)
+        try {
+          final messaging = FirebaseMessaging.instance;
+          final fcmToken = await messaging.getToken();
+          if (fcmToken != null && fcmToken.isNotEmpty) {
+            print('✅ [iOS] Token FCM já disponível: ${fcmToken.substring(0, 20)}...${fcmToken.substring(fcmToken.length - 20)}');
+            print('✅ [iOS] APNS token foi registrado com sucesso');
+          } else {
+            print('⚠️ [iOS] Token FCM ainda não disponível');
+            print('⚠️ [iOS] APNS token ainda não foi recebido');
+            print('⚠️ [iOS] AppDelegate pode não estar passando APNS token para Firebase');
+          }
+        } catch (e) {
+          print('⚠️ [iOS] Erro ao verificar token FCM: $e');
+          print('⚠️ [iOS] APNS token ainda não foi recebido');
+          print('⚠️ [iOS] AppDelegate não está passando APNS token para Firebase');
+        }
+        
+        print('🍎 [iOS] ================================================================');
+      }
+      
       // Inicializar notificações locais
       await _initializeLocalNotifications();
       
@@ -2749,6 +2778,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       // Solicitar permissão de notificações do Firebase
       final messaging = FirebaseMessaging.instance;
       
+      if (Platform.isIOS) {
+        print('🍎 [iOS] Solicitando permissão de notificações...');
+      }
+      
       NotificationSettings settings = await messaging.requestPermission(
         alert: true,
         badge: true,
@@ -2763,7 +2796,11 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         sound: true,
       );
 
-      print('📱 Permissão de notificações Firebase: ${settings.authorizationStatus}');
+      if (Platform.isIOS) {
+        print('🍎 [iOS] Permissão de notificações Firebase: ${settings.authorizationStatus}');
+      } else {
+        print('📱 Permissão de notificações Firebase: ${settings.authorizationStatus}');
+      }
 
       if (settings.authorizationStatus == AuthorizationStatus.authorized) {
         print('✅ Permissão de notificações concedida');
@@ -4288,17 +4325,45 @@ class PushNotificationService {
       // 2. Obter token FCM
       String? fcmToken;
       try {
+        if (Platform.isIOS) {
+          print('🍎 [iOS] [PushNotificationService] ========== OBTENDO TOKEN FCM ==========');
+          print('🍎 [iOS] [PushNotificationService] Verificando se APNS token foi registrado...');
+        }
         debugLogger.addLog('📱 [PushNotificationService] Obtendo token FCM...', level: LogLevel.info);
         
         fcmToken = await _messaging.getToken();
         
         if (fcmToken == null) {
+          if (Platform.isIOS) {
+            print('❌ [iOS] [PushNotificationService] Token FCM é null');
+            print('❌ [iOS] [PushNotificationService] Possíveis causas:');
+            print('❌ [iOS] [PushNotificationService]   - APNS token ainda não foi recebido');
+            print('❌ [iOS] [PushNotificationService]   - Certificado APNS não configurado no Firebase Console');
+            print('❌ [iOS] [PushNotificationService]   - AppDelegate não está passando APNS token para Firebase');
+            print('❌ [iOS] [PushNotificationService]   - FirebaseAppDelegateProxyEnabled não está habilitado no Info.plist');
+            print('🍎 [iOS] [PushNotificationService] ==========================================');
+          }
           debugLogger.addLog('❌ [PushNotificationService] Token FCM é null', level: LogLevel.error);
           return null;
         }
         
+        if (Platform.isIOS) {
+          final tokenPreview = fcmToken.length > 40 
+              ? '${fcmToken.substring(0, 20)}...${fcmToken.substring(fcmToken.length - 20)}'
+              : fcmToken;
+          print('✅ [iOS] [PushNotificationService] Token FCM obtido com sucesso');
+          print('✅ [iOS] [PushNotificationService] Token preview: $tokenPreview');
+          print('✅ [iOS] [PushNotificationService] Tamanho do token: ${fcmToken.length} caracteres');
+          print('✅ [iOS] [PushNotificationService] APNS token foi registrado corretamente');
+          print('🍎 [iOS] [PushNotificationService] ==========================================');
+        }
         debugLogger.addLog('✅ [PushNotificationService] Token FCM obtido com sucesso', level: LogLevel.info);
       } catch (e) {
+        if (Platform.isIOS) {
+          print('❌ [iOS] [PushNotificationService] Erro ao obter token FCM: $e');
+          print('❌ [iOS] [PushNotificationService] Tipo do erro: ${e.runtimeType}');
+          print('🍎 [iOS] [PushNotificationService] ==========================================');
+        }
         debugLogger.addLog('❌ [PushNotificationService] Erro ao obter token FCM: $e', level: LogLevel.error);
         return null;
       }
@@ -4312,6 +4377,10 @@ class PushNotificationService {
         final appToken = await authService.getToken();
         
         final platform = Platform.isAndroid ? 'android' : 'ios';
+        if (Platform.isIOS) {
+          print('🍎 [iOS] [PushNotificationService] Platform: $platform');
+          print('🍎 [iOS] [PushNotificationService] App token disponível: ${appToken != null}');
+        }
         final headers = <String, String>{
           'Accept': 'application/json',
           'Content-Type': 'application/json',
@@ -4319,6 +4388,13 @@ class PushNotificationService {
         
         if (appToken != null) {
           headers['Authorization'] = 'Bearer $appToken';
+          if (Platform.isIOS) {
+            print('✅ [iOS] [PushNotificationService] Header Authorization adicionado');
+          }
+        } else {
+          if (Platform.isIOS) {
+            print('⚠️ [iOS] [PushNotificationService] App token não disponível, enviando sem autenticação');
+          }
         }
 
         final requestData = {
@@ -4326,6 +4402,13 @@ class PushNotificationService {
           'fcm_token': fcmToken,
           'platform': platform,
         };
+        
+        if (Platform.isIOS) {
+          print('🍎 [iOS] [PushNotificationService] Dados da requisição:');
+          print('🍎 [iOS] [PushNotificationService]   Email: $email');
+          print('🍎 [iOS] [PushNotificationService]   Platform: $platform');
+          print('🍎 [iOS] [PushNotificationService]   FCM Token: ${fcmToken.substring(0, 20)}...');
+        }
 
         final response = await _dio.post(
           '/api/push-token',

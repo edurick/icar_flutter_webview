@@ -66,25 +66,58 @@ import UserNotifications
     print("✅ Firebase configurado manualmente com opções do projeto icar-2d12c")
   }
   
-  // Registrar token APNS
-  override func application(_ application: UIApplication,
-    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
-    print("📱 APNS token registrado com sucesso")
+  // Método chamado quando o dispositivo recebe o token APNS
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    print("🍎 [iOS] ========== TOKEN APNS RECEBIDO ==========")
+    let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
+    let token = tokenParts.joined()
+    print("🍎 [iOS] Device Token APNS: \(token)")
+    
+    // Passar o token para Firebase Messaging
     Messaging.messaging().apnsToken = deviceToken
+    print("✅ [iOS] Token APNS passado para Firebase Messaging")
+    
+    // Obter token FCM após receber APNS token
+    Messaging.messaging().token { token, error in
+      if let error = error {
+        print("❌ [iOS] Erro ao obter token FCM: \(error.localizedDescription)")
+      } else if let token = token {
+        print("✅ [iOS] Token FCM obtido: \(token.prefix(20))...\(token.suffix(20))")
+      }
+    }
+    
+    print("🍎 [iOS] ========================================")
   }
   
-  // Tratar erro ao registrar notificações remotas
-  override func application(_ application: UIApplication,
-    didFailToRegisterForRemoteNotificationsWithError error: Error) {
-    print("❌ Erro ao registrar notificações remotas: \(error.localizedDescription)")
+  // Método chamado quando falha ao registrar para remote notifications
+  override func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    print("❌ [iOS] ========== ERRO AO REGISTRAR PARA REMOTE NOTIFICATIONS ==========")
+    print("❌ [iOS] Erro: \(error.localizedDescription)")
+    print("❌ [iOS] Detalhes: \(error)")
+    print("❌ [iOS] =================================================================")
   }
 }
 
-// Extensão para Firebase Messaging Delegate
+// Extensão para implementar Firebase Messaging delegate
+@available(iOS 10.0, *)
 extension AppDelegate: MessagingDelegate {
   func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-    print("📱 Firebase registration token: \(String(describing: fcmToken))")
+    print("🍎 [iOS] ========== TOKEN FCM RECEBIDO ==========")
+    if let token = fcmToken {
+      print("✅ [iOS] Token FCM: \(token.prefix(20))...\(token.suffix(20))")
+      print("✅ [iOS] Tamanho do token: \(token.count) caracteres")
+    } else {
+      print("⚠️ [iOS] Token FCM é nil")
+    }
+    print("🍎 [iOS] ======================================")
     
+    // Enviar notificação para Flutter sobre mudança de token
     let dataDict: [String: String] = ["token": fcmToken ?? ""]
     NotificationCenter.default.post(
       name: Notification.Name("FCMToken"),
