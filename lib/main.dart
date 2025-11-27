@@ -273,7 +273,9 @@ class AuthWrapper extends StatefulWidget {
 }
 
 class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
-  late final WebViewController controller;
+  static const String _icarBaseUrl = 'https://icar.skalacode.com';
+  // Instantiated early so build() can safely reference it before configuration completes.
+  final WebViewController controller = WebViewController();
   final AuthService _authService = AuthService();
   final PushNotificationService _pushNotificationService = PushNotificationService();
   late AppLinks _appLinks;
@@ -328,9 +330,8 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     });
     
     // Solicitar permissão de localização no início do app
-    _requestLocationPermission();
     _initDeepLinkListener();
-    _initPushNotifications();
+    _initializePermissionFlow();
     _loadEmailFromFlutterStorage();
     _startEmailMonitoring();
     _startLocalStorageMonitoring();
@@ -345,6 +346,15 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     _emailMonitorTimer?.cancel();
     _localStorageMonitorTimer?.cancel();
     super.dispose();
+  }
+
+  void _initializePermissionFlow() {
+    // Executar sequencialmente para evitar múltiplos diálogos de permissão simultâneos (ex: localização e notificações)
+    Future(() async {
+      await _requestLocationPermission();
+      await Future.delayed(const Duration(milliseconds: 200));
+      await _initPushNotifications();
+    });
   }
 
   @override
@@ -400,7 +410,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       print('🍎 [iOS] User-Agent configurado: $userAgent');
 
       // Configuração base do WebViewController
-      controller = WebViewController()
+      controller
         ..setJavaScriptMode(JavaScriptMode.unrestricted)
         ..enableZoom(false)
         ..setUserAgent(userAgent)
@@ -2719,9 +2729,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       
       // Solicitar permissões do Android (especialmente importante para Android 13+ e Samsung)
       if (Platform.isAndroid) {
-        // Solicitar permissão POST_NOTIFICATIONS (Android 13+)
-        final notificationPermission = await Permission.notification.request();
-        print('📱 Permissão POST_NOTIFICATIONS: $notificationPermission');
+        await _ensureAndroidNotificationPermission();
         
         // Solicitar permissão para ignorar otimização de bateria (especialmente importante para Samsung)
         try {
@@ -2746,6 +2754,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         badge: true,
         sound: true,
         provisional: false,
+      );
+
+      // Garantir exibição de notificações quando o app estiver em foreground (necessário para iOS)
+      await messaging.setForegroundNotificationPresentationOptions(
+        alert: true,
+        badge: true,
+        sound: true,
       );
 
       print('📱 Permissão de notificações Firebase: ${settings.authorizationStatus}');
@@ -2786,6 +2801,60 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _ensureAndroidNotificationPermission() async {
+    try {
+      final currentStatus = await Permission.notification.status;
+      print('📱 Status atual da permissão de notificação: $currentStatus');
+      
+      if (currentStatus.isGranted) {
+        print('✅ Permissão de notificação já concedida no Android');
+        return;
+      }
+      
+      final result = await Permission.notification.request();
+      print('📱 Resultado da solicitação de permissão de notificação: $result');
+      
+      if (result.isGranted) {
+        print('✅ Usuário concedeu permissão de notificação');
+        return;
+      }
+      
+      if (result.isPermanentlyDenied || result.isRestricted) {
+        print('⚠️ Permissão de notificação permanentemente negada - exibindo diálogo orientativo');
+        if (!mounted) return;
+        await _showNotificationPermissionDialog();
+      }
+    } catch (e) {
+      print('❌ Erro ao garantir permissão de notificação: $e');
+    }
+  }
+
+  Future<void> _showNotificationPermissionDialog() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Ative as notificações'),
+          content: const Text('Para receber alertas de chat e SOS, habilite as notificações do iCar nas configurações do sistema.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Agora não'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                openAppSettings();
+              },
+              child: const Text('Abrir configurações'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   // Inicializar notificações locais
   Future<void> _initializeLocalNotifications() async {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -2802,58 +2871,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
 
     await _localNotifications.initialize(
       initSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        print('📱 Notificação local clicada: ${response.id}');
-        print('📱 Payload: ${response.payload}');
-        
-        // Tentar parsear o payload como dados JSON
-        if (response.payload != null && response.payload!.isNotEmpty) {
-          try {
-            // O payload vem como JSON string, precisamos parsear
-            final payloadMap = jsonDecode(response.payload!) as Map<String, dynamic>;
-            
-            // Verificar se é uma notificação de chat
-            if (payloadMap['type'] == 'chat') {
-              // Criar RemoteMessage simulado para usar a mesma função de navegação
-              final simulatedMessage = RemoteMessage(
-                messageId: response.id.toString(),
-                data: payloadMap,
-              );
-              _handleNotificationClick(simulatedMessage);
-            }
-          } catch (e) {
-            print('❌ Erro ao processar payload da notificação local: $e');
-            print('   Tentando método alternativo...');
-            
-            // Fallback: tentar extrair dados básicos do payload string
-            try {
-              final payloadString = response.payload!;
-              if (payloadString.contains('type') && payloadString.contains('chat')) {
-                final oficinaIdMatch = RegExp(r'oficina_id[:\s]*(\d+)').firstMatch(payloadString);
-                final sosIdMatch = RegExp(r'sos_id[:\s]*(\d+)').firstMatch(payloadString);
-                
-                if (oficinaIdMatch != null) {
-                  final payloadMap = <String, dynamic>{
-                    'type': 'chat',
-                    'oficina_id': oficinaIdMatch.group(1),
-                  };
-                  if (sosIdMatch != null) {
-                    payloadMap['sos_id'] = sosIdMatch.group(1);
-                  }
-                  
-                  final simulatedMessage = RemoteMessage(
-                    messageId: response.id.toString(),
-                    data: payloadMap,
-                  );
-                  _handleNotificationClick(simulatedMessage);
-                }
-              }
-            } catch (e2) {
-              print('❌ Erro no método alternativo: $e2');
-            }
-          }
-        }
-      },
+      onDidReceiveNotificationResponse: _processLocalNotificationResponse,
     );
 
     // Criar canal de notificação para Android
@@ -2873,7 +2891,95 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     }
   }
 
+  void _processLocalNotificationResponse(NotificationResponse response) {
+    print('📱 Notificação local clicada: ${response.id}');
+    print('📱 Payload: ${response.payload}');
+
+    final payload = response.payload;
+    if (payload == null || payload.isEmpty) {
+      print('⚠️ Notificação local sem payload - ignorando');
+      return;
+    }
+
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map<String, dynamic>) {
+        final normalizedData = decoded.map((key, value) => MapEntry(key, value?.toString() ?? ''));
+        final simulatedMessage = RemoteMessage(
+          messageId: response.id?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          data: normalizedData,
+        );
+        _handleNotificationClick(simulatedMessage);
+        return;
+      }
+      print('⚠️ Payload decodificado não é um Map válido: $decoded');
+    } catch (e) {
+      print('❌ Erro ao decodificar payload da notificação local: $e');
+      print('   Tentando extrair informações básicas via regex...');
+      _handleLegacyNotificationPayload(payload, response.id);
+    }
+  }
+
+  void _handleLegacyNotificationPayload(String payload, int? notificationId) {
+    try {
+      final typeMatch = RegExp("type\\s*[:=]\\s*[\"']?([a-zA-Z_]+)").firstMatch(payload);
+      final normalizedType = typeMatch?.group(1) ?? 'chat';
+      final data = <String, dynamic>{'type': normalizedType};
+
+      final oficinaIdMatch = RegExp(r'oficina_id[:\s"=]*(\d+)').firstMatch(payload);
+      if (oficinaIdMatch != null) {
+        data['oficina_id'] = oficinaIdMatch.group(1);
+      }
+
+      final sosIdMatch = RegExp(r'sos_id[:\s"=]*(\d+)').firstMatch(payload);
+      if (sosIdMatch != null) {
+        data['sos_id'] = sosIdMatch.group(1);
+      }
+
+      final agendamentoMatch = RegExp(r'agendamento_id[:\s"=]*(\d+)').firstMatch(payload);
+      if (agendamentoMatch != null) {
+        data['agendamento_id'] = agendamentoMatch.group(1);
+      }
+
+      if (data.length > 1) {
+        final simulatedMessage = RemoteMessage(
+          messageId: notificationId?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          data: data,
+        );
+        _handleNotificationClick(simulatedMessage);
+      } else {
+        print('⚠️ Não foi possível extrair dados úteis do payload legado: $payload');
+      }
+    } catch (e) {
+      print('❌ Erro ao processar payload legado: $e');
+    }
+  }
+
   // Exibir notificação local
+  String? _normalizeImageUrl(String? rawUrl) {
+    if (rawUrl == null) return null;
+    var trimmed = rawUrl.trim();
+    if (trimmed.isEmpty || trimmed == 'null') {
+      return null;
+    }
+
+    if (trimmed.startsWith('//')) {
+      trimmed = 'https:$trimmed';
+    } else if (!trimmed.startsWith('http')) {
+      if (trimmed.startsWith('/')) {
+        trimmed = '$_icarBaseUrl$trimmed';
+      } else {
+        trimmed = '$_icarBaseUrl/storage/$trimmed';
+      }
+    }
+
+    if (trimmed.startsWith('http://')) {
+      trimmed = trimmed.replaceFirst('http://', 'https://');
+    }
+
+    return trimmed;
+  }
+
   Future<void> _showLocalNotification(RemoteMessage message) async {
     final notification = message.notification;
     if (notification == null) return;
@@ -2883,26 +2989,27 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     print('📱 Chaves dos dados: ${message.data.keys.toList()}');
 
     // Buscar URL do ícone do remetente nos dados
-    // PRIORIDADE: sender_icon_url > image (se image for do sender)
+    // PRIORIDADE: sender_icon_url > sender_foto_perfil > oficina_foto_perfil > image (quando não for o logo padrão)
     String? senderIconUrl;
     if (message.data.containsKey('sender_icon_url')) {
-      senderIconUrl = message.data['sender_icon_url'];
+      senderIconUrl = _normalizeImageUrl(message.data['sender_icon_url']?.toString());
       print('📱 URL do ícone do remetente encontrada (sender_icon_url): $senderIconUrl');
+    } else if (message.data.containsKey('sender_foto_perfil')) {
+      senderIconUrl = _normalizeImageUrl(message.data['sender_foto_perfil']?.toString());
+      print('📱 Usando sender_foto_perfil como ícone: $senderIconUrl');
+    } else if (message.data.containsKey('oficina_foto_perfil')) {
+      senderIconUrl = _normalizeImageUrl(message.data['oficina_foto_perfil']?.toString());
+      print('📱 Usando oficina_foto_perfil como ícone: $senderIconUrl');
     } else if (message.data.containsKey('image')) {
-      // Se não temos sender_icon_url, verificar se 'image' é do sender
-      // (se image == sender_icon_url ou se não temos sender_icon_url mas temos image)
-      final imageUrl = message.data['image'];
-      // Verificar se image não é o logo padrão do iCar
-      if (imageUrl != null && 
-          imageUrl.toString().isNotEmpty && 
-          !imageUrl.toString().contains('icar.skalacode.com/images/logo.png')) {
-        senderIconUrl = imageUrl.toString();
+      final imageUrl = _normalizeImageUrl(message.data['image']?.toString());
+      if (imageUrl != null && !imageUrl.contains('icar.skalacode.com/images/logo.png')) {
+        senderIconUrl = imageUrl;
         print('📱 Usando image como senderIconUrl (não é logo padrão): $senderIconUrl');
       } else {
         print('⚠️ image é logo padrão do iCar, ignorando');
       }
     } else {
-      print('⚠️ sender_icon_url e image não encontrados nos dados');
+      print('⚠️ sender_icon_url, sender_foto_perfil, oficina_foto_perfil e image não encontrados nos dados');
     }
 
     // Baixar imagem do ícone se disponível
@@ -3060,95 +3167,201 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
     print('💾 Comando JavaScript enviado para salvar dados');
   }
 
-  // Função para tratar clique em notificação e navegar para o chat
+  // Função para tratar clique em notificação e navegar conforme o tipo
   Future<void> _handleNotificationClick(RemoteMessage message) async {
     print('🔍 Processando clique na notificação...');
-    print('📱 Tipo: ${message.data['type']}');
+    final type = message.data['type']?.toString().toLowerCase() ?? '';
+    print('📱 Tipo: $type');
     print('📱 Dados completos: ${message.data}');
     
-    // Verificar se é uma notificação de chat
-    if (message.data['type'] == 'chat') {
-      final oficinaId = message.data['oficina_id'];
-      final sosId = message.data['sos_id'];
-      final oficinaNome = message.data['oficina_nome'] ?? 'Oficina';
-      
-      print('💬 Notificação de chat detectada');
-      print('   Oficina ID: $oficinaId');
-      print('   SOS ID: $sosId');
-      print('   Oficina Nome: $oficinaNome');
-      
-      if (oficinaId != null) {
-        // Preparar dados
-        final dataToSave = {
-          'oficina_id': oficinaId,
-          'sos_id': sosId,
-          'oficina_nome': oficinaNome,
-        };
-        
-        // Salvar dados no sessionStorage ANTES de navegar
-        // Isso garante que os dados estejam disponíveis quando o componente carregar
-        final sosIdStr = sosId?.toString() ?? '';
-        final oficinaIdStr = oficinaId.toString();
-        final oficinaNomeEscaped = oficinaNome.replaceAll("'", "\\'").replaceAll("\n", "\\n").replaceAll("\r", "");
-        
-        print('💾 Salvando dados no sessionStorage ANTES de navegar...');
-        final preSaveJsCode = '''
-          (function() {
-            try {
-              console.log('💾 [Flutter] Salvando dados ANTES da navegação...');
-              
-              const oficinaData = {
-                id: parseInt('$oficinaIdStr'),
-                name: '$oficinaNomeEscaped',
-                sos_id: ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "parseInt('$sosIdStr')" : 'null'}
-              };
-              
-              sessionStorage.setItem('oficinaData', JSON.stringify(oficinaData));
-              sessionStorage.setItem('oficinaId', '$oficinaIdStr');
-              
-              ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "sessionStorage.setItem('sosId', '$sosIdStr');" : ''}
-              ${sosIdStr.isNotEmpty && sosIdStr != '0' ? "sessionStorage.setItem('current_sos_id', '$sosIdStr');" : ''}
-              
-              console.log('✅ [Flutter] Dados salvos ANTES da navegação:', {
-                oficinaData: JSON.stringify(oficinaData),
-                oficinaId: '$oficinaIdStr',
-                sosId: '${sosIdStr.isNotEmpty && sosIdStr != '0' ? sosIdStr : 'null'}'
-              });
-            } catch(e) {
-              console.error('❌ [Flutter] Erro ao salvar dados:', e);
-            }
-          })();
-        ''';
-        
-        // Executar JavaScript para salvar dados antes de navegar
-        controller.runJavaScript(preSaveJsCode);
-        
-        // Aguardar um pouco para garantir que o JS foi executado
-        await Future.delayed(const Duration(milliseconds: 200));
-        
-        // Armazenar dados também para salvar novamente quando a página carregar (backup)
-        _pendingNotificationData = dataToSave;
-        
-        // Construir URL do chat com parâmetros
-        String chatUrl = 'https://icarfront.vercel.app/chat?source=mobile';
-        if (oficinaId != null && oficinaId.toString().isNotEmpty) {
-          chatUrl += '&oficina_id=$oficinaId';
-        }
-        if (sosId != null && sosId.toString().isNotEmpty && sosId != '0') {
-          chatUrl += '&sos_id=$sosId';
-        }
-        
-        print('🔄 Navegando para: $chatUrl');
-        
-        // Navegar para o chat
-        controller.loadRequest(Uri.parse(chatUrl));
-      } else {
-        print('⚠️ Oficina ID não encontrado, navegando para chat genérico');
-        controller.loadRequest(Uri.parse('https://icarfront.vercel.app/chat?source=mobile'));
-      }
-    } else {
-      print('ℹ️ Notificação não é do tipo chat, ignorando navegação');
+    switch (type) {
+      case 'chat':
+        await _handleChatNotification(message);
+        break;
+      case 'agendamento':
+        await _handleAgendamentoNotification(message);
+        break;
+      case 'sos':
+        await _handleSosNotification(message);
+        break;
+      default:
+        print('ℹ️ Tipo de notificação não suportado ou ausente: $type');
     }
+  }
+
+  Future<void> _handleChatNotification(RemoteMessage message) async {
+    final oficinaId = _sanitizeId(message.data['oficina_id']);
+    final sosId = _sanitizeId(message.data['sos_id'], allowZero: true);
+    final oficinaNome = (message.data['oficina_nome'] ?? 'Oficina').toString();
+    
+    print('💬 Notificação de chat detectada');
+    print('   Oficina ID: $oficinaId');
+    print('   SOS ID: $sosId');
+    print('   Oficina Nome: $oficinaNome');
+    
+    if (oficinaId == null) {
+      print('⚠️ Oficina ID não encontrado, navegando para chat genérico');
+      await controller.loadRequest(Uri.parse('https://icarfront.vercel.app/chat?source=mobile'));
+      return;
+    }
+    
+    final dataToSave = {
+      'oficina_id': oficinaId,
+      'sos_id': sosId,
+      'oficina_nome': oficinaNome,
+    };
+    
+    final oficinaNomeEscaped = oficinaNome.replaceAll("'", "\\'").replaceAll("\n", "\\n").replaceAll("\r", "");
+    
+    print('💾 Salvando dados no sessionStorage ANTES de navegar...');
+    final preSaveJsCode = '''
+      (function() {
+        try {
+          console.log('💾 [Flutter] Salvando dados ANTES da navegação...');
+          
+          const oficinaData = {
+            id: parseInt('$oficinaId'),
+            name: '$oficinaNomeEscaped',
+            sos_id: ${sosId != null && sosId != '0' ? "parseInt('$sosId')" : 'null'}
+          };
+          
+          sessionStorage.setItem('oficinaData', JSON.stringify(oficinaData));
+          sessionStorage.setItem('oficinaId', '$oficinaId');
+          
+          ${sosId != null && sosId != '0' ? "sessionStorage.setItem('sosId', '$sosId'); sessionStorage.setItem('current_sos_id', '$sosId');" : ''}
+          
+          console.log('✅ [Flutter] Dados salvos ANTES da navegação:', {
+            oficinaData: JSON.stringify(oficinaData),
+            oficinaId: '$oficinaId',
+            sosId: '${sosId ?? 'null'}'
+          });
+        } catch(e) {
+          console.error('❌ [Flutter] Erro ao salvar dados:', e);
+        }
+      })();
+    ''';
+    
+    await controller.runJavaScript(preSaveJsCode);
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    _pendingNotificationData = dataToSave;
+    
+    final chatUrl = StringBuffer('https://icarfront.vercel.app/chat?source=mobile&oficina_id=$oficinaId');
+    if (sosId != null && sosId != '0') {
+      chatUrl.write('&sos_id=$sosId');
+    }
+    
+    print('🔄 Navegando para: ${chatUrl.toString()}');
+    await controller.loadRequest(Uri.parse(chatUrl.toString()));
+  }
+
+  Future<void> _handleAgendamentoNotification(RemoteMessage message) async {
+    final agendamentoId = _sanitizeId(message.data['agendamento_id']);
+    final event = message.data['event']?.toString();
+    
+    if (agendamentoId == null) {
+      print('⚠️ Notificação de agendamento sem ID - abrindo lista');
+      await controller.loadRequest(Uri.parse('https://icarfront.vercel.app/agendamento?source=mobile'));
+      return;
+    }
+    
+    final normalizedStatus = event?.toLowerCase();
+    await _saveAgendamentoNavigationData(agendamentoId, normalizedStatus);
+    
+    final targetUrl = StringBuffer('https://icarfront.vercel.app/agendamento/$agendamentoId?source=mobile');
+    if (normalizedStatus != null && normalizedStatus.isNotEmpty) {
+      targetUrl.write('&status=${Uri.encodeComponent(normalizedStatus)}');
+    }
+    
+    print('📅 Navegando para agendamento: ${targetUrl.toString()}');
+    await controller.loadRequest(Uri.parse(targetUrl.toString()));
+  }
+
+  Future<void> _handleSosNotification(RemoteMessage message) async {
+    final sosId = _sanitizeId(message.data['sos_id']);
+    final oficinaId = _sanitizeId(message.data['oficina_id']);
+    final status = message.data['status']?.toString();
+    final event = message.data['event']?.toString();
+    
+    if (sosId == null) {
+      print('⚠️ Notificação de SOS sem ID - abrindo fluxo padrão');
+      await controller.loadRequest(Uri.parse('https://icarfront.vercel.app/sos?source=mobile'));
+      return;
+    }
+    
+    await _saveSosNavigationData(sosId, oficinaId, status ?? event);
+    
+    final targetUrl = StringBuffer('https://icarfront.vercel.app/sos?source=mobile&sos_id=$sosId');
+    if (oficinaId != null) {
+      targetUrl.write('&oficina_id=$oficinaId');
+    }
+    if (event != null && event.isNotEmpty) {
+      targetUrl.write('&event=${Uri.encodeComponent(event)}');
+    }
+    if (status != null && status.isNotEmpty) {
+      targetUrl.write('&status=${Uri.encodeComponent(status)}');
+    }
+    
+    print('🚨 Navegando para SOS: ${targetUrl.toString()}');
+    await controller.loadRequest(Uri.parse(targetUrl.toString()));
+  }
+
+  String? _sanitizeId(dynamic value, {bool allowZero = false}) {
+    if (value == null) return null;
+    final strValue = value.toString().trim();
+    if (strValue.isEmpty || strValue == 'null') return null;
+    if (!allowZero && strValue == '0') return null;
+    return strValue;
+  }
+
+  Future<void> _saveAgendamentoNavigationData(String agendamentoId, String? status) async {
+    final statusLine = (status != null && status.isNotEmpty)
+        ? "sessionStorage.setItem('agendamento_status', '$status');"
+        : '';
+    
+    final jsCode = '''
+      (function() {
+        try {
+          sessionStorage.setItem('current_agendamento_id', '$agendamentoId');
+          sessionStorage.setItem('agendamentoId', '$agendamentoId');
+          $statusLine
+          window.dispatchEvent(new StorageEvent('storage', {
+            key: 'current_agendamento_id',
+            newValue: '$agendamentoId'
+          }));
+        } catch(e) {
+          console.error('❌ [Flutter] Erro ao salvar dados do agendamento:', e);
+        }
+      })();
+    ''';
+    
+    await controller.runJavaScript(jsCode);
+  }
+
+  Future<void> _saveSosNavigationData(String sosId, String? oficinaId, String? statusOrEvent) async {
+    final oficinaLine = oficinaId != null ? "sessionStorage.setItem('oficinaId', '$oficinaId');" : '';
+    final statusLine = (statusOrEvent != null && statusOrEvent.isNotEmpty)
+        ? "sessionStorage.setItem('sosStatus', '$statusOrEvent');"
+        : '';
+    
+    final jsCode = '''
+      (function() {
+        try {
+          sessionStorage.setItem('sosId', '$sosId');
+          sessionStorage.setItem('current_sos_id', '$sosId');
+          $oficinaLine
+          $statusLine
+          window.dispatchEvent(new StorageEvent('storage', {
+            key: 'sosId',
+            newValue: '$sosId'
+          }));
+        } catch(e) {
+          console.error('❌ [Flutter] Erro ao salvar dados do SOS:', e);
+        }
+      })();
+    ''';
+    
+    await controller.runJavaScript(jsCode);
   }
 
   // Carregar email do SharedPreferences ao iniciar
@@ -4123,10 +4336,10 @@ class PushNotificationService {
         if (response.statusCode == 200 || response.statusCode == 201) {
           debugLogger.addLog('✅ [PushNotificationService] Token FCM registrado com sucesso no backend', level: LogLevel.info);
           return fcmToken;
-        } else {
-          debugLogger.addLog('⚠️ [PushNotificationService] Resposta inesperada do backend: ${response.statusCode}', level: LogLevel.warning);
-          return null;
         }
+
+        debugLogger.addLog('⚠️ [PushNotificationService] Resposta inesperada do backend: ${response.statusCode}', level: LogLevel.warning);
+        return null;
       } on DioException catch (e) {
         debugLogger.addLog('❌ [PushNotificationService] Erro ao enviar token: ${e.type}, Status: ${e.response?.statusCode}', level: LogLevel.error);
         
@@ -4135,11 +4348,12 @@ class PushNotificationService {
           return null;
         }
         
-        // Para outros erros, considerar sucesso parcial (token foi obtido)
-        return fcmToken;
+        // Para outros erros (timeout, 5xx, etc) considerar falha para permitir retry
+        debugLogger.addLog('⚠️ [PushNotificationService] Falha ao registrar token no backend - retorno será null para forçar nova tentativa', level: LogLevel.warning);
+        return null;
       } catch (e) {
         debugLogger.addLog('❌ [PushNotificationService] Erro geral ao enviar token: $e', level: LogLevel.error);
-        return fcmToken; // Retornar o token mesmo com erro parcial
+        return null; // Garantir que apenas sucessos reais retornem token
       }
     } catch (e, stackTrace) {
       debugLogger.addLog('❌ [PushNotificationService] Erro geral ao registrar token: $e', level: LogLevel.error);
