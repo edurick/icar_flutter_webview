@@ -10,29 +10,73 @@ import UserNotifications
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    print("🍎 [iOS] ========== AppDelegate.didFinishLaunchingWithOptions ==========")
+    print("🍎 [iOS] Iniciando configuração do app...")
+    
     // Configurar Firebase (com fallback quando o GoogleService-Info.plist não estiver embutido)
+    print("🍎 [iOS] Configurando Firebase...")
     configureFirebaseApp()
     
+    // Verificar se Firebase foi configurado corretamente
+    if FirebaseApp.app() == nil {
+      print("❌ [iOS] ERRO: Firebase não foi configurado!")
+    } else {
+      print("✅ [iOS] Firebase configurado com sucesso")
+      if let app = FirebaseApp.app() {
+        print("✅ [iOS] Firebase App Name: \(app.name)")
+        print("✅ [iOS] Firebase App Options: \(app.options.projectID ?? "N/A")")
+      }
+    }
+    
     // Configurar Firebase Messaging
+    print("🍎 [iOS] Configurando Firebase Messaging...")
     if #available(iOS 10.0, *) {
+      print("🍎 [iOS] iOS 10.0+ detectado, usando UNUserNotificationCenter")
       UNUserNotificationCenter.current().delegate = self
+      print("✅ [iOS] UNUserNotificationCenter delegate configurado")
+      
       let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
+      print("🍎 [iOS] Solicitando autorização de notificações...")
       UNUserNotificationCenter.current().requestAuthorization(
         options: authOptions,
-        completionHandler: { _, _ in }
+        completionHandler: { granted, error in
+          if let error = error {
+            print("❌ [iOS] Erro ao solicitar autorização de notificações: \(error.localizedDescription)")
+          } else {
+            print("✅ [iOS] Autorização de notificações: \(granted ? "concedida" : "negada")")
+          }
+        }
       )
     } else {
+      print("🍎 [iOS] iOS < 10.0, usando UIUserNotificationSettings")
       let settings: UIUserNotificationSettings =
         UIUserNotificationSettings(types: [.alert, .badge, .sound], categories: nil)
       application.registerUserNotificationSettings(settings)
     }
     
+    print("🍎 [iOS] Registrando para remote notifications...")
     application.registerForRemoteNotifications()
     
     // Configurar delegate do Firebase Messaging
+    print("🍎 [iOS] Configurando Firebase Messaging delegate...")
     Messaging.messaging().delegate = self
+    print("✅ [iOS] Firebase Messaging delegate configurado")
+    
+    // Verificar se o método swizzling está habilitado
+    if let infoPlist = Bundle.main.infoDictionary,
+       let proxyEnabled = infoPlist["FirebaseAppDelegateProxyEnabled"] as? Bool {
+      print("🍎 [iOS] FirebaseAppDelegateProxyEnabled: \(proxyEnabled)")
+      if !proxyEnabled {
+        print("⚠️ [iOS] AVISO: FirebaseAppDelegateProxyEnabled está desabilitado!")
+        print("⚠️ [iOS] Isso pode causar problemas com push notifications")
+      }
+    } else {
+      print("⚠️ [iOS] AVISO: FirebaseAppDelegateProxyEnabled não encontrado no Info.plist")
+    }
     
     GeneratedPluginRegistrant.register(with: self)
+    print("✅ [iOS] GeneratedPluginRegistrant registrado")
+    print("🍎 [iOS] ================================================================")
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 
@@ -74,18 +118,45 @@ import UserNotifications
     print("🍎 [iOS] ========== TOKEN APNS RECEBIDO ==========")
     let tokenParts = deviceToken.map { data in String(format: "%02.2hhx", data) }
     let token = tokenParts.joined()
-    print("🍎 [iOS] Device Token APNS: \(token)")
+    print("🍎 [iOS] Device Token APNS (hex): \(token)")
+    print("🍎 [iOS] Device Token APNS (tamanho): \(deviceToken.count) bytes")
+    
+    // Verificar se Firebase Messaging está disponível
+    if Messaging.messaging().apnsToken == nil {
+      print("🍎 [iOS] Firebase Messaging apnsToken ainda é nil, configurando agora...")
+    } else {
+      print("🍎 [iOS] Firebase Messaging já tinha um apnsToken anterior")
+    }
     
     // Passar o token para Firebase Messaging
+    print("🍎 [iOS] Passando token APNS para Firebase Messaging...")
     Messaging.messaging().apnsToken = deviceToken
-    print("✅ [iOS] Token APNS passado para Firebase Messaging")
+    
+    // Verificar se foi configurado corretamente
+    if Messaging.messaging().apnsToken != nil {
+      print("✅ [iOS] Token APNS passado para Firebase Messaging com sucesso")
+    } else {
+      print("❌ [iOS] ERRO: Token APNS não foi configurado no Firebase Messaging!")
+    }
     
     // Obter token FCM após receber APNS token
+    print("🍎 [iOS] Solicitando token FCM do Firebase...")
     Messaging.messaging().token { token, error in
       if let error = error {
-        print("❌ [iOS] Erro ao obter token FCM: \(error.localizedDescription)")
+        print("❌ [iOS] ========== ERRO AO OBTER TOKEN FCM ==========")
+        print("❌ [iOS] Erro: \(error.localizedDescription)")
+        print("❌ [iOS] Código do erro: \((error as NSError).code)")
+        print("❌ [iOS] Domínio do erro: \((error as NSError).domain)")
+        print("❌ [iOS] UserInfo: \((error as NSError).userInfo)")
+        print("❌ [iOS] ============================================")
       } else if let token = token {
-        print("✅ [iOS] Token FCM obtido: \(token.prefix(20))...\(token.suffix(20))")
+        print("✅ [iOS] ========== TOKEN FCM OBTIDO COM SUCESSO ==========")
+        print("✅ [iOS] Token FCM (início): \(token.prefix(20))")
+        print("✅ [iOS] Token FCM (fim): \(token.suffix(20))")
+        print("✅ [iOS] Token FCM (tamanho): \(token.count) caracteres")
+        print("✅ [iOS] ================================================")
+      } else {
+        print("⚠️ [iOS] Token FCM é nil (pode ser normal se ainda estiver sendo gerado)")
       }
     }
     
@@ -108,15 +179,30 @@ import UserNotifications
 @available(iOS 10.0, *)
 extension AppDelegate: MessagingDelegate {
   func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-    print("🍎 [iOS] ========== TOKEN FCM RECEBIDO ==========")
+    print("🍎 [iOS] ========== TOKEN FCM RECEBIDO (MessagingDelegate) ==========")
+    print("🍎 [iOS] Método didReceiveRegistrationToken chamado")
+    
     if let token = fcmToken {
-      print("✅ [iOS] Token FCM: \(token.prefix(20))...\(token.suffix(20))")
+      print("✅ [iOS] Token FCM recebido: \(token.prefix(20))...\(token.suffix(20))")
       print("✅ [iOS] Tamanho do token: \(token.count) caracteres")
+      print("✅ [iOS] Token FCM completo: \(token)")
     } else {
       print("⚠️ [iOS] Token FCM é nil")
+      print("⚠️ [iOS] Possíveis causas:")
+      print("⚠️ [iOS]   - APNS token ainda não foi registrado")
+      print("⚠️ [iOS]   - APN Key não configurada no Firebase Console")
+      print("⚠️ [iOS]   - Problema de conectividade com Firebase")
     }
-    print("🍎 [iOS] ======================================")
     
+    // Verificar se o APNS token está configurado
+    if let apnsToken = messaging.apnsToken {
+      let apnsTokenHex = apnsToken.map { String(format: "%02.2hhx", $0) }.joined()
+      print("✅ [iOS] APNS token está configurado: \(apnsTokenHex.prefix(20))...")
+    } else {
+      print("⚠️ [iOS] APNS token NÃO está configurado no Firebase Messaging")
+    }
+    
+    print("🍎 [iOS] Enviando notificação para Flutter sobre mudança de token...")
     // Enviar notificação para Flutter sobre mudança de token
     let dataDict: [String: String] = ["token": fcmToken ?? ""]
     NotificationCenter.default.post(
@@ -124,6 +210,8 @@ extension AppDelegate: MessagingDelegate {
       object: nil,
       userInfo: dataDict
     )
+    print("✅ [iOS] Notificação enviada para Flutter")
+    print("🍎 [iOS] ============================================================")
   }
 }
 
@@ -139,15 +227,28 @@ extension AppDelegate {
                               withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
     let userInfo = notification.request.content.userInfo
     
-    print("📱 Notificação recebida em foreground: \(userInfo)")
+    print("📱 [iOS] ========== NOTIFICAÇÃO RECEBIDA EM FOREGROUND ==========")
+    print("📱 [iOS] Método willPresentNotification chamado")
+    print("📱 [iOS] UserInfo: \(userInfo)")
+    print("📱 [iOS] Título: \(notification.request.content.title)")
+    print("📱 [iOS] Corpo: \(notification.request.content.body)")
+    print("📱 [iOS] Badge: \(notification.request.content.badge?.intValue ?? 0)")
+    print("📱 [iOS] Sound: \(notification.request.content.sound?.description ?? "N/A")")
+    
+    // Processar a mensagem com Firebase Messaging
+    print("📱 [iOS] Processando mensagem com Firebase Messaging...")
+    Messaging.messaging().appDidReceiveMessage(userInfo)
     
     // Exibir a notificação mesmo quando o app está em foreground
     // Isso permite que o usuário veja a notificação enquanto usa o app
     if #available(iOS 14.0, *) {
+      print("📱 [iOS] iOS 14.0+, usando opções: .banner, .badge, .sound, .list")
       completionHandler([.banner, .badge, .sound, .list])
     } else {
+      print("📱 [iOS] iOS < 14.0, usando opções: .alert, .badge, .sound")
       completionHandler([.alert, .badge, .sound])
     }
+    print("📱 [iOS] ======================================================")
   }
   
   // Método chamado quando o usuário toca em uma notificação
@@ -157,12 +258,20 @@ extension AppDelegate {
                               withCompletionHandler completionHandler: @escaping () -> Void) {
     let userInfo = response.notification.request.content.userInfo
     
-    print("📱 Usuário tocou na notificação: \(userInfo)")
+    print("📱 [iOS] ========== USUÁRIO TOCOU NA NOTIFICAÇÃO ==========")
+    print("📱 [iOS] Método didReceiveNotificationResponse chamado")
+    print("📱 [iOS] Action Identifier: \(response.actionIdentifier)")
+    print("📱 [iOS] UserInfo: \(userInfo)")
+    print("📱 [iOS] Título: \(response.notification.request.content.title)")
+    print("📱 [iOS] Corpo: \(response.notification.request.content.body)")
     
     // Processar a notificação tocada
     // O Flutter receberá isso através do FirebaseMessaging.onMessageOpenedApp
+    print("📱 [iOS] Processando mensagem com Firebase Messaging...")
     Messaging.messaging().appDidReceiveMessage(userInfo)
+    print("✅ [iOS] Mensagem processada")
     
     completionHandler()
+    print("📱 [iOS] ==================================================")
   }
 }

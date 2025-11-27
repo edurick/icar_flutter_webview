@@ -3817,20 +3817,63 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           return;
         }
         
-        // Verificar se o token FCM já está registrado
+        // Verificar se o token FCM já está registrado e pertence ao usuário atual
         bool tokenAlreadyRegistered = false;
         try {
           final checkTokenJsCode = '''
             (function() {
               const fcmToken = localStorage.getItem('fcm_token') || localStorage.getItem('fcmToken');
-              return !!fcmToken;
+              const fcmEmail = localStorage.getItem('fcm_email');
+              return JSON.stringify({
+                hasToken: !!fcmToken,
+                email: fcmEmail
+              });
             })();
           ''';
           
           final checkResult = await controller.runJavaScriptReturningResult(checkTokenJsCode);
-          final hasTokenStr = checkResult.toString().trim().toLowerCase();
-          tokenAlreadyRegistered = hasTokenStr == 'true' || hasTokenStr == '"true"';
+          final resultStr = checkResult.toString().trim();
           
+          // Limpar string retornada (pode vir com aspas extras)
+          String jsonStr = resultStr;
+          if (jsonStr.startsWith('"') && jsonStr.endsWith('"')) {
+            jsonStr = jsonStr.substring(1, jsonStr.length - 1);
+          }
+          jsonStr = jsonStr.replaceAll('\\"', '"');
+          
+          try {
+            final data = jsonDecode(jsonStr);
+            final hasToken = data['hasToken'] == true;
+            final storedEmail = data['email'];
+            
+            // Só considera registrado se tiver token E o email for o mesmo (ou se não tiver email salvo, assume que é o mesmo para compatibilidade)
+            // Mas se tiver email salvo e for diferente, então NÃO está registrado para este usuário
+            if (hasToken) {
+              if (storedEmail != null && storedEmail.toString().isNotEmpty && storedEmail != 'null') {
+                if (storedEmail == emailToUse) {
+                  tokenAlreadyRegistered = true;
+                } else {
+                  debugLogger.addLog('🔄 [Ciclo ${timer.tick}] Token existe mas é de outro usuário ($storedEmail != $emailToUse) - Forçando renovação', level: LogLevel.info);
+                  print('🔄 [DEBUG] [Ciclo ${timer.tick}] Token existe mas é de outro usuário ($storedEmail != $emailToUse) - Forçando renovação');
+                  tokenAlreadyRegistered = false;
+                }
+              } else {
+                // Compatibilidade: se não tem email salvo, assume que está registrado (comportamento antigo)
+                // Mas idealmente deveríamos atualizar para salvar o email
+                tokenAlreadyRegistered = true;
+                // Forçar atualização para salvar o email
+                if (emailToUse != null) {
+                   debugLogger.addLog('ℹ️ [Ciclo ${timer.tick}] Token existe mas sem email associado - Forçando atualização para vincular a $emailToUse', level: LogLevel.info);
+                   tokenAlreadyRegistered = false; 
+                }
+              }
+            }
+          } catch (e) {
+             // Fallback para verificação simples se falhar o JSON
+             final hasTokenStr = resultStr.toLowerCase();
+             tokenAlreadyRegistered = hasTokenStr.contains('true');
+          }
+
           if (tokenAlreadyRegistered) {
             debugLogger.addLog('✅ [Ciclo ${timer.tick}] Token FCM já está registrado para $emailToUse', level: LogLevel.info);
             print('✅ [DEBUG] [Ciclo ${timer.tick}] Token FCM já está registrado para $emailToUse');
@@ -3848,17 +3891,46 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             final difference = now.difference(lastUpdate);
             
             if (difference.inHours < 5) {
-              shouldUpdate = false;
-              if (timer.tick % 15 == 0) { // Log a cada 30 segundos quando aguardando
-                debugLogger.addLog('⏰ Última atualização do FCM foi há ${difference.inHours}h ${difference.inMinutes % 60}m - aguardando 5 horas', level: LogLevel.info);
-                print('⏰ [DEBUG] Última atualização do FCM foi há ${difference.inHours}h ${difference.inMinutes % 60}m - aguardando 5 horas');
-              }
+              // Se o token não está registrado (ex: email mudou), ignoramos o lastUpdate e forçamos atualização
+              // Mas se for apenas renovação periódica...
+              // A lógica acima já definiu tokenAlreadyRegistered = false se o email mudou.
+              // Então aqui, se tokenAlreadyRegistered é false, devíamos permitir.
+              // Mas espere: se lastUpdateStr existe, significa que TEM um token (ou tinha).
+              
+              // Se o email mudou, tokenAlreadyRegistered é false. Queremos atualizar IMEDIATAMENTE.
+              // Então não devemos bloquear pelo tempo.
+              
+              // Vamos verificar se o email mudou olhando o log acima? Não temos acesso fácil aqui.
+              // Mas se tokenAlreadyRegistered é false, pode ser porque não tem token OU porque o email mudou.
+              
+              // Se não tem token, lastUpdateStr provavelmente é null ou antigo.
+              // Se tem token mas email mudou, lastUpdateStr pode ser recente.
+              
+              // Simplificação: Se tokenAlreadyRegistered é false, SEMPRE atualiza, ignorando o tempo.
+              // O tempo só serve para RE-registrar o MESMO token periodicamente.
+              
+              shouldUpdate = true; 
             }
           } catch (e) {
             debugLogger.addLog('⚠️ Erro ao parsear timestamp da última atualização: $e', level: LogLevel.warning);
             print('⚠️ [DEBUG] Erro ao parsear timestamp da última atualização: $e');
             // Se houver erro ao parsear, continuar com o registro
           }
+        } else if (tokenAlreadyRegistered) {
+           // Se já está registrado, verificamos se precisa renovar pelo tempo (5h)
+           if (lastUpdateStr != null && lastUpdateStr.isNotEmpty && lastUpdateStr != 'null') {
+              try {
+                final lastUpdate = DateTime.parse(lastUpdateStr);
+                final now = DateTime.now();
+                final difference = now.difference(lastUpdate);
+                
+                if (difference.inHours >= 5) {
+                   shouldUpdate = true;
+                   tokenAlreadyRegistered = false; // Forçar renovação
+                   debugLogger.addLog('⏰ Token expirado (5h) - Renovando...', level: LogLevel.info);
+                }
+              } catch (e) {}
+           }
         }
         
         if (shouldUpdate && !tokenAlreadyRegistered) {
@@ -4051,16 +4123,19 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
                 localStorage.setItem('fcm_platform', '$platform');
                 localStorage.setItem('fcm_registered_at', '$registeredAt');
                 localStorage.setItem('fcm_last_update', '$lastUpdate');
+                localStorage.setItem('fcm_email', '$email'); // Salvando email para verificação futura
                 
                 // Verificar se foi salvo corretamente
                 const savedToken = localStorage.getItem('fcm_token');
                 const savedPlatform = localStorage.getItem('fcm_platform');
                 const savedUpdate = localStorage.getItem('fcm_last_update');
+                const savedEmail = localStorage.getItem('fcm_email');
                 
                 console.log('✅ Flutter: Token FCM salvo no localStorage da WebView');
                 console.log('📱 Platform: ' + savedPlatform);
                 console.log('🔑 Token salvo: ' + (savedToken ? savedToken.substring(0, 20) + '...' : 'NULL'));
                 console.log('⏰ Timestamp de controle salvo: ' + savedUpdate);
+                console.log('📧 Email vinculado: ' + savedEmail);
                 console.log('✅ Verificação: Token presente = ' + !!savedToken);
               } catch(e) {
                 console.error('❌ Erro ao salvar token FCM no localStorage:', e);
@@ -4084,6 +4159,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               const platform = localStorage.getItem('fcm_platform');
               const lastUpdate = localStorage.getItem('fcm_last_update');
               const registeredAt = localStorage.getItem('fcm_registered_at');
+              const email = localStorage.getItem('fcm_email');
               
               return JSON.stringify({
                 fcm_token: fcmToken ? 'PRESENTE' : 'AUSENTE',
@@ -4091,6 +4167,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
                 fcm_platform: platform,
                 fcm_last_update: lastUpdate,
                 fcm_registered_at: registeredAt,
+                fcm_email: email,
                 token_length: fcmToken ? fcmToken.length : 0,
                 token_preview: fcmToken ? fcmToken.substring(0, 20) + '...' : 'N/A'
               });
@@ -4119,6 +4196,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             print('   - Platform: ${verifyData['fcm_platform']}');
             print('   - Última atualização: ${verifyData['fcm_last_update']}');
             print('   - Registrado em: ${verifyData['fcm_registered_at']}');
+            print('   - Email vinculado: ${verifyData['fcm_email']}');
             print('   - Tamanho do token: ${verifyData['token_length']}');
             print('   - Preview: ${verifyData['token_preview']}');
           } catch (e) {
