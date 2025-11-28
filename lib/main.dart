@@ -2880,11 +2880,13 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         provisional: false,
       );
 
-      // Garantir exibição de notificações quando o app estiver em foreground (necessário para iOS)
+      // Configurar notificações em foreground (iOS)
+      // Não exibir alert/banner em foreground - apenas badge e som
+      // As notificações push do sistema continuarão funcionando normalmente em background
       await messaging.setForegroundNotificationPresentationOptions(
-        alert: true,
-        badge: true,
-        sound: true,
+        alert: false, // Não exibir alert em foreground
+        badge: true,  // Atualizar badge
+        sound: false, // Não tocar som em foreground (opcional, pode manter true se desejar)
       );
 
       if (Platform.isIOS) {
@@ -2908,8 +2910,10 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         print('📱 Corpo: ${message.notification?.body}');
         print('📱 Dados: ${message.data}');
         
-        // Exibir notificação local quando o app está em foreground
-        _showLocalNotification(message);
+        // Notificação recebida mas não será exibida como pop-up dentro do app
+        // As notificações push do sistema continuarão funcionando normalmente em background
+        // A página de notificações será populada automaticamente pelo backend
+        print('ℹ️ Notificação recebida - não exibindo pop-up (apenas push notifications do sistema)');
       });
 
       FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {

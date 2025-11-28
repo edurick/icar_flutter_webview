@@ -239,14 +239,14 @@ extension AppDelegate {
     print("📱 [iOS] Processando mensagem com Firebase Messaging...")
     Messaging.messaging().appDidReceiveMessage(userInfo)
     
-    // Exibir a notificação mesmo quando o app está em foreground
-    // Isso permite que o usuário veja a notificação enquanto usa o app
+    // Não exibir notificação quando o app está em foreground
+    // Apenas atualizar badge e tocar som, sem exibir banner/alert
+    // As notificações push do sistema continuarão funcionando normalmente em background
+    print("📱 [iOS] Notificação recebida em foreground - não exibindo banner (apenas push notifications em background)")
     if #available(iOS 14.0, *) {
-      print("📱 [iOS] iOS 14.0+, usando opções: .banner, .badge, .sound, .list")
-      completionHandler([.banner, .badge, .sound, .list])
+      completionHandler([.badge, .sound]) // Removido .banner e .list para não exibir visualmente
     } else {
-      print("📱 [iOS] iOS < 14.0, usando opções: .alert, .badge, .sound")
-      completionHandler([.alert, .badge, .sound])
+      completionHandler([.badge, .sound]) // Removido .alert para não exibir visualmente
     }
     print("📱 [iOS] ======================================================")
   }
