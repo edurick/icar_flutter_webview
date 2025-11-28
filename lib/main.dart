@@ -796,6 +796,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       if (token != null && userParam != null) {
         try {
           final user = jsonDecode(Uri.decodeComponent(userParam));
+          
+          print('🔵 [Google Sign In] ========================================');
+          print('🔵 [Google Sign In] Login bem-sucedido via deep link!');
+          print('🔵 [Google Sign In] User ID: ${user['id'] ?? 'N/A'}');
+          print('🔵 [Google Sign In] User object keys: ${user.keys.toList()}');
+          
+          // Extrair email para log
+          final emailFromUser = _extractEmailFromUser(user);
+          if (emailFromUser != null) {
+            print('🔵 [Google Sign In] Email encontrado: ${emailFromUser.substring(0, emailFromUser.indexOf('@'))}@***');
+          } else {
+            print('⚠️ [Google Sign In] Email NÃO encontrado no objeto user');
+          }
+          print('🔵 [Google Sign In] ========================================');
+          
           // Para deep links, verificar se há rememberMe na URL ou sempre salvar (OAuth)
           final rememberMe = uri.queryParameters['rememberMe'] == 'true' || true;
           await _authService.saveAuthData(token, user, rememberMe: rememberMe);
@@ -804,6 +819,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
           _showSuccess('Login realizado com sucesso!');
 
           // Enviar token para WebView para login automático
+          print('🔵 [Google Sign In] Enviando token para WebView e registrando FCM token...');
           await _sendTokenToWebView(token, user, provider: 'google');
 
           // Verificar se é novo usuário para redirecionar para perfil
@@ -899,15 +915,61 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       await controller.runJavaScript(jsCode);
       print('✅ Token enviado para WebView com sucesso');
 
+      // Tentar obter email para registro FCM
+      String? emailForFcm = email;
+      
+      // Se não encontrou no objeto user, tentar outras fontes
+      if (emailForFcm == null || emailForFcm.isEmpty) {
+        print('📧 Email não encontrado no objeto user, tentando outras fontes...');
+        
+        // Tentar obter do SharedPreferences do Flutter
+        final emailFromStorage = await _getEmailFromFlutterStorage();
+        if (emailFromStorage != null && emailFromStorage.isNotEmpty) {
+          emailForFcm = emailFromStorage;
+          print('✅ Email obtido do SharedPreferences: ${emailForFcm.substring(0, emailForFcm.indexOf('@'))}@***');
+        } else {
+          // Tentar obter do localStorage da WebView após salvar
+          print('📧 Tentando obter email do localStorage da WebView...');
+          try {
+            final getEmailJsCode = '''
+              (function() {
+                const email = localStorage.getItem('user_email') || 
+                             localStorage.getItem('userEmail') || 
+                             localStorage.getItem('email');
+                return email || '';
+              })();
+            ''';
+            
+            final emailResult = await controller.runJavaScriptReturningResult(getEmailJsCode);
+            String emailStr = emailResult.toString().trim();
+            
+            // Limpar aspas se houver
+            if (emailStr.startsWith('"') && emailStr.endsWith('"')) {
+              emailStr = emailStr.substring(1, emailStr.length - 1);
+            }
+            emailStr = emailStr.replaceAll('\\"', '"');
+            
+            if (emailStr.isNotEmpty && emailStr.contains('@') && emailStr != 'null') {
+              emailForFcm = emailStr;
+              print('✅ Email obtido do localStorage: ${emailForFcm.substring(0, emailForFcm.indexOf('@'))}@***');
+            }
+          } catch (e) {
+            print('⚠️ Erro ao obter email do localStorage: $e');
+          }
+        }
+      }
+
       // Registrar token FCM imediatamente após salvar dados de autenticação
-      if (email != null && email.isNotEmpty) {
-        print('📱 Registrando token FCM imediatamente após login...');
+      if (emailForFcm != null && emailForFcm.isNotEmpty) {
+        print('📱 [OAuth $provider] Registrando token FCM imediatamente após login...');
+        print('📱 [OAuth $provider] Email para registro: ${emailForFcm.substring(0, emailForFcm.indexOf('@'))}@***');
         // Usar um pequeno delay para garantir que o Firebase está pronto
         Future.delayed(const Duration(milliseconds: 500), () {
-          _registerPushToken(email);
+          _registerPushToken(emailForFcm!);
         });
       } else {
-        print('⚠️ Email não encontrado no objeto user, aguardando monitoramento...');
+        print('⚠️ [OAuth $provider] Email não encontrado após tentar todas as fontes, aguardando monitoramento...');
+        print('⚠️ [OAuth $provider] O monitoramento de email irá capturar e registrar o token quando o email estiver disponível');
       }
 
     } catch (e) {
@@ -2336,8 +2398,22 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
             value.contains('@') &&
             action != 'removed') {
           
+          // Log específico para OAuth (quando email é detectado após login)
+          if (key.toLowerCase().contains('email')) {
+            print('📧 [OAuth Fallback] Email detectado no localStorage após login OAuth');
+            print('📧 [OAuth Fallback] Tentando registrar FCM token via monitoramento...');
+          }
+          
           debugLogger.addLog('📧 [Listener] Email válido detectado: $value', level: LogLevel.info);
           print('📧 [DEBUG] [Listener] Email válido detectado: $value');
+          
+          // Verificar se pode ser um login OAuth (email detectado após login)
+          final isOAuthFallback = key.toLowerCase().contains('email') && 
+                                   (key == 'user_email' || key == 'userEmail' || key == 'email');
+          if (isOAuthFallback) {
+            print('📧 [OAuth Fallback] Email detectado no localStorage - pode ser login OAuth');
+            print('📧 [OAuth Fallback] Monitoramento ativo como fallback para registro FCM');
+          }
           
           // Salvar email no SharedPreferences do Flutter (fire and forget)
           _saveEmailToFlutterStorage(value).catchError((e) {
@@ -2512,10 +2588,25 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
         final token = response.data['token'];
         final user = response.data['user'];
 
+        print('🍎 [Apple Sign In] ========================================');
+        print('🍎 [Apple Sign In] Login bem-sucedido!');
+        print('🍎 [Apple Sign In] User ID: ${user['id'] ?? 'N/A'}');
+        print('🍎 [Apple Sign In] User object keys: ${user.keys.toList()}');
+        
+        // Extrair email para log
+        final emailFromUser = _extractEmailFromUser(user);
+        if (emailFromUser != null) {
+          print('🍎 [Apple Sign In] Email encontrado: ${emailFromUser.substring(0, emailFromUser.indexOf('@'))}@***');
+        } else {
+          print('⚠️ [Apple Sign In] Email NÃO encontrado no objeto user');
+        }
+        print('🍎 [Apple Sign In] ========================================');
+
         // Salvar dados localmente (OAuth Apple - sempre salvar com rememberMe)
         await _authService.saveAuthData(token, user, rememberMe: true);
 
         // Enviar para o WebView com provider 'apple'
+        print('🍎 [Apple Sign In] Enviando token para WebView e registrando FCM token...');
         await _sendTokenToWebView(token, user, provider: 'apple');
 
         print('✅ Login com Apple completado com sucesso!');
@@ -3958,9 +4049,57 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
   // Extrair email do objeto user
   String? _extractEmailFromUser(Map<String, dynamic> user) {
     try {
-      return user['email'] as String? ?? 
-             user['user_email'] as String? ?? 
-             user['e_mail'] as String?;
+      // Lista de campos possíveis onde o email pode estar
+      final emailFields = [
+        'email',
+        'user_email',
+        'e_mail',
+        'userEmail',
+        'userEmailAddress',
+        'emailAddress',
+        'mail',
+        'primary_email',
+        'primaryEmail',
+        // Campos específicos de OAuth
+        'oauth_email',
+        'oauthEmail',
+        'provider_email',
+        'providerEmail',
+        // Campos do Apple Sign In
+        'apple_email',
+        'appleEmail',
+        // Campos do Google Sign In
+        'google_email',
+        'googleEmail',
+      ];
+      
+      // Tentar encontrar email em cada campo
+      for (final field in emailFields) {
+        final value = user[field];
+        if (value != null) {
+          // Converter para String se não for
+          final emailStr = value.toString().trim();
+          if (emailStr.isNotEmpty && emailStr.contains('@')) {
+            print('✅ Email encontrado no campo "$field": ${emailStr.substring(0, emailStr.indexOf('@'))}@***');
+            return emailStr;
+          }
+        }
+      }
+      
+      // Se não encontrou em campos específicos, tentar buscar em valores aninhados
+      // (caso o email esteja dentro de um objeto)
+      for (final key in user.keys) {
+        final value = user[key];
+        if (value is Map) {
+          final nestedEmail = _extractEmailFromUser(value);
+          if (nestedEmail != null) {
+            return nestedEmail;
+          }
+        }
+      }
+      
+      print('⚠️ Email não encontrado no objeto user. Campos disponíveis: ${user.keys.toList()}');
+      return null;
     } catch (e) {
       print('⚠️ Erro ao extrair email do objeto user: $e');
       return null;
@@ -4046,7 +4185,7 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       
       print('📱 [DEBUG] ========================================');
       print('📱 [DEBUG] INICIANDO REGISTRO DE TOKEN FCM');
-      print('📱 [DEBUG] Email: $email');
+      print('📱 [DEBUG] Email: ${email.substring(0, email.indexOf('@'))}@***');
       print('📱 [DEBUG] Timestamp: ${DateTime.now().toIso8601String()}');
       print('📱 [DEBUG] ========================================');
       
