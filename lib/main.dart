@@ -2432,16 +2432,18 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
               final emailToRegister = _pendingEmailRegistration!;
               _pendingEmailRegistration = null;
               
-              // Verificar se o token FCM já está registrado
+              // Verificar se o token FCM já está registrado PARA ESTE EMAIL ESPECÍFICO
               try {
                 final checkTokenJsCode = '''
                   (function() {
                     const fcmToken = localStorage.getItem('fcm_token') || localStorage.getItem('fcmToken');
+                    const fcmEmail = localStorage.getItem('fcm_email');
                     const fcmLastUpdate = localStorage.getItem('fcm_last_update');
                     return JSON.stringify({
                       hasToken: !!fcmToken,
                       tokenLength: fcmToken ? fcmToken.length : 0,
-                      lastUpdate: fcmLastUpdate
+                      lastUpdate: fcmLastUpdate,
+                      email: fcmEmail
                     });
                   })();
                 ''';
@@ -2455,11 +2457,19 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
                 
                 final checkData = jsonDecode(checkStr);
                 final hasToken = checkData['hasToken'] == true;
+                final storedEmail = checkData['email'];
                 
+                // Só considerar registrado se tiver token E o email for o mesmo
                 if (hasToken) {
-                  debugLogger.addLog('✅ Token FCM já está registrado para $emailToRegister - ignorando', level: LogLevel.info);
-                  print('✅ [DEBUG] [Listener] Token FCM já está registrado para $emailToRegister - ignorando');
-                  return;
+                  if (storedEmail != null && storedEmail.toString().isNotEmpty && storedEmail != 'null' && storedEmail == emailToRegister) {
+                    debugLogger.addLog('✅ Token FCM já está registrado para $emailToRegister - ignorando', level: LogLevel.info);
+                    print('✅ [DEBUG] [Listener] Token FCM já está registrado para $emailToRegister - ignorando');
+                    return;
+                  } else {
+                    // Token existe mas é de outro usuário - forçar registro
+                    debugLogger.addLog('🔄 [Listener] Token existe mas é de outro usuário ($storedEmail != $emailToRegister) - Forçando registro', level: LogLevel.info);
+                    print('🔄 [DEBUG] [Listener] Token existe mas é de outro usuário ($storedEmail != $emailToRegister) - Forçando registro');
+                  }
                 }
               } catch (e) {
                 print('⚠️ [DEBUG] [Listener] Erro ao verificar token FCM: $e');
@@ -4163,10 +4173,43 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       }
       
       // Verificar se já registramos este email recentemente (evitar duplicação em memória)
-      if (email == _lastRegisteredEmail) {
+      // MAS: se o email mudou (comparado ao email armazenado no localStorage), sempre permitir registro
+      bool emailChanged = false;
+      try {
+        final checkEmailJsCode = '''
+          (function() {
+            const storedEmail = localStorage.getItem('fcm_email');
+            return storedEmail ? storedEmail : null;
+          })();
+        ''';
+        final storedEmailResult = await controller.runJavaScriptReturningResult(checkEmailJsCode);
+        String storedEmailStr = storedEmailResult.toString().trim();
+        if (storedEmailStr.startsWith('"') && storedEmailStr.endsWith('"')) {
+          storedEmailStr = storedEmailStr.substring(1, storedEmailStr.length - 1);
+        }
+        storedEmailStr = storedEmailStr.replaceAll('\\"', '"');
+        
+        if (storedEmailStr.isNotEmpty && storedEmailStr != 'null' && storedEmailStr != email) {
+          emailChanged = true;
+          debugLogger.addLog('🔄 Email mudou de $storedEmailStr para $email - Forçando novo registro', level: LogLevel.info);
+          print('🔄 [DEBUG] Email mudou de $storedEmailStr para $email - Forçando novo registro');
+        }
+      } catch (e) {
+        // Se houver erro ao verificar, assumir que email mudou para garantir registro
+        emailChanged = true;
+        debugLogger.addLog('⚠️ Erro ao verificar email armazenado, assumindo mudança: $e', level: LogLevel.warning);
+      }
+      
+      // Só bloquear se for o mesmo email E não houve mudança de email
+      if (email == _lastRegisteredEmail && !emailChanged) {
         debugLogger.addLog('📧 Email já registrado recentemente: $email (ignorando)', level: LogLevel.info);
         print('📧 [DEBUG] Email já registrado recentemente: $email (ignorando)');
         return;
+      }
+      
+      // Se o email mudou, limpar o último email registrado para forçar novo registro
+      if (emailChanged) {
+        _lastRegisteredEmail = null;
       }
       
       // Verificar se já tentamos registrar este email recentemente e falhou
