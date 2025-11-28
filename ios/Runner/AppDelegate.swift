@@ -271,7 +271,11 @@ extension AppDelegate {
     Messaging.messaging().appDidReceiveMessage(userInfo)
     print("✅ [iOS] Mensagem processada")
     
-    completionHandler()
-    print("📱 [iOS] ==================================================")
+    // Chamar o método do super para garantir que o FlutterAppDelegate processe corretamente
+    // Isso é necessário para que o Firebase Messaging possa notificar o Flutter via onMessageOpenedApp
+    super.userNotificationCenter(center, didReceive: response) {
+      completionHandler()
+      print("📱 [iOS] ==================================================")
+    }
   }
 }
