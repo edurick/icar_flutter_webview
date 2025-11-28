@@ -4402,18 +4402,42 @@ class PushNotificationService {
 
       // 2. Obter token FCM
       String? fcmToken;
+      int maxRetries = 10; // Para uso em logs de erro
       try {
         if (Platform.isIOS) {
           print('🍎 [iOS] [PushNotificationService] ========== OBTENDO TOKEN FCM ==========');
           print('🍎 [iOS] [PushNotificationService] Verificando se APNS token foi registrado...');
+          debugLogger.addLog('📱 [PushNotificationService] iOS detectado - aguardando token APNS...', level: LogLevel.info);
+          
+          // No iOS, aguardar até o token APNS ser recebido (pode levar alguns segundos)
+          maxRetries = 10; // 10 tentativas
+          int retryDelay = 1000; // 1 segundo entre tentativas
+          fcmToken = null;
+          
+          for (int i = 0; i < maxRetries; i++) {
+            fcmToken = await _messaging.getToken();
+            
+            if (fcmToken != null && fcmToken.isNotEmpty) {
+              print('✅ [iOS] [PushNotificationService] Token FCM obtido na tentativa ${i + 1}');
+              debugLogger.addLog('✅ [PushNotificationService] Token FCM obtido na tentativa ${i + 1}', level: LogLevel.info);
+              break; // Token obtido com sucesso
+            }
+            
+            if (i < maxRetries - 1) {
+              print('⏳ [iOS] [PushNotificationService] Token FCM ainda não disponível, aguardando ${retryDelay}ms... (tentativa ${i + 1}/$maxRetries)');
+              debugLogger.addLog('⏳ [PushNotificationService] Token FCM ainda não disponível, aguardando... (tentativa ${i + 1}/$maxRetries)', level: LogLevel.warning);
+              await Future.delayed(Duration(milliseconds: retryDelay));
+            }
+          }
+        } else {
+          // Android: obter token imediatamente
+          debugLogger.addLog('📱 [PushNotificationService] Obtendo token FCM...', level: LogLevel.info);
+          fcmToken = await _messaging.getToken();
         }
-        debugLogger.addLog('📱 [PushNotificationService] Obtendo token FCM...', level: LogLevel.info);
-        
-        fcmToken = await _messaging.getToken();
         
         if (fcmToken == null) {
           if (Platform.isIOS) {
-            print('❌ [iOS] [PushNotificationService] Token FCM é null');
+            print('❌ [iOS] [PushNotificationService] Token FCM é null após $maxRetries tentativas');
             print('❌ [iOS] [PushNotificationService] Possíveis causas:');
             print('❌ [iOS] [PushNotificationService]   - APNS token ainda não foi recebido');
             print('❌ [iOS] [PushNotificationService]   - Certificado APNS não configurado no Firebase Console');
