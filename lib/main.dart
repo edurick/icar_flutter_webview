@@ -4104,10 +4104,21 @@ class _AuthWrapperState extends State<AuthWrapper> with WidgetsBindingObserver {
       // (caso o email esteja dentro de um objeto)
       for (final key in user.keys) {
         final value = user[key];
-        if (value is Map) {
+        if (value is Map<String, dynamic>) {
           final nestedEmail = _extractEmailFromUser(value);
           if (nestedEmail != null) {
             return nestedEmail;
+          }
+        } else if (value is Map) {
+          // Tentar converter Map<dynamic, dynamic> para Map<String, dynamic>
+          try {
+            final convertedMap = Map<String, dynamic>.from(value);
+            final nestedEmail = _extractEmailFromUser(convertedMap);
+            if (nestedEmail != null) {
+              return nestedEmail;
+            }
+          } catch (e) {
+            // Se não conseguir converter, ignorar e continuar
           }
         }
       }
